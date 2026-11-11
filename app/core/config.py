@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Empty by default: only after verifying that these operation types denote
     # remittances originating Bolivia and destined for Chile may they be enabled.
     bolivia_to_chile_operation_types: str = ""
+    # Chile -> Bolivia remittance types require separate business approval.
+    chile_to_bolivia_operation_types: str = ""
     sync_interval_seconds: int = 300
     reconcile_interval_seconds: int = 30
     backfill_days: int = 30

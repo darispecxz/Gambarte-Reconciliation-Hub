@@ -163,27 +163,83 @@ def infer_direction(raw: dict) -> str | None:
     return None
 
 
+# Currency IDs are database-specific; retain their original values in raw.
+# Catalogs verified by read-only metadata queries on 2026-11-11.
+BOLIVIA_CURRENCIES = {
+    1: "USD", 2: "BOB", 3: "CLP", 4: "BRL", 5: "EUR",
+    6: "ARS", 7: "JPY", 8: "AUD", 9: "CAD", 10: "DKK",
+    11: "NOK", 12: "PEN", 13: "GBP", 14: "CNH", 15: "SEK",
+    16: "CHF", 17: "NZD", 18: "PYG", 19: "COP", 20: "MXN",
+    21: "CNH",
+}
+CHILE_CURRENCIES = {
+    1: "USD", 2: "CLP", 3: "BOB", 4: "BRL", 5: "EUR",
+    6: "ARG", 7: "DKK", 8: "NOK", 9: "SEK", 10: "AUD",
+    11: "CAD", 12: "NZD", 13: "CHF", 14: "GBP", 15: "PEN",
+    16: "JPY", 17: "CNH", 18: "USD", 19: "BOB", 20: "USD",
+    21: "GYP", 22: "VES", 23: "MXN", 24: "UYU",
+}
+# 18/19/20 in Chile represent different business modalities with the same
+# currency, NOT interchangeable operation types. Original currency_id stays in raw.
+# ARG and GYP are literal values from the Chile catalog; do not silently
+# convert them to ARS/PYG without confirming their business semantics.
+
+
+def resolve_currency(source: str, raw_currency: object) -> str | None:
+    """Resolve known country-specific IDs or already explicit ISO currency codes."""
+    catalog = {"BOLIVIA": BOLIVIA_CURRENCIES, "CHILE": CHILE_CURRENCIES}.get(source)
+    if catalog is None or raw_currency is None:
+        return None
+    value = str(raw_currency).strip().upper()
+    if not value:
+        return None
+    if value.isdecimal():
+        return catalog.get(int(value))
+    # Chile remittance view uses a varchar currency, e.g. 'BOB'.
+    return value if value in set(catalog.values()) else None
+
+
+def approved_operation_types(value: str) -> set[int]:
+    """Strict parser; malformed values must not accidentally enable directions."""
+    result = set()
+    for token in value.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if not token.isdecimal():
+            raise ValueError("Operation type allowlist must contain positive integers")
+        operation = int(token)
+        if operation <= 0:
+            raise ValueError("Operation types must be positive")
+        result.add(operation)
+    return result
+
+
 def normalize(source: str, dataset: str, raw: dict) -> Extracted:
     operation = int(raw["operation_type"]) if raw.get("operation_type") is not None else None
     pk = int(raw["source_pk"])
-    # Keep currency ID as evidence, not ISO code: mon_rec can be an internal FK.
-    # CL view moneda may already be a code or an integer; never label it USD/CLP without verification.
-    raw_currency = raw.get("currency_id")
-    currency = (str(raw_currency).upper() if raw_currency is not None else None)
-    # Unknown currency identity is excluded from monetary comparison.
-    if currency not in {"USD", "BOB", "CLP"}:
-        currency = None
-    direction = infer_direction(raw) if dataset == "remittance" else None
-    if dataset == "remittance" and source == "BOLIVIA" and direction is None:
-        approved = {int(item.strip()) for item in get_settings().bolivia_to_chile_operation_types.split(",")
-                    if item.strip().isdigit()}
-        if get_settings().source_mapping_verified and operation in approved:
+    currency = resolve_currency(source, raw.get("currency_id"))
+    # abr_ori/abr_des from the Chile view denote branches/localities (AGR,
+    # CBA, LPM...), NOT countries. Never infer a country from those fields.
+    direction = None
+    if dataset == "remittance" and get_settings().source_mapping_verified:
+        s = get_settings()
+        if source == "BOLIVIA" and operation in approved_operation_types(
+            s.bolivia_to_chile_operation_types
+        ):
             direction = "BO_TO_CL"
+        elif source == "CHILE" and operation in approved_operation_types(
+            s.chile_to_bolivia_operation_types
+        ):
+            direction = "CL_TO_BO"
+    code = str(raw["code"]).strip() if raw.get("code") is not None else ""
+    if not code:
+        raise ValueError("Source record without a reconciliation code")
     return Extracted(
         source=source,
         dataset=dataset,
         source_id=f"{operation}:{pk}",
-        code=str(raw["code"]).strip(),
+        code=code,
         status=map_status(source, raw.get("status_code")) if dataset == "remittance"
                else "RECORDED",
         amount=decimal_amount(raw["amount"]) if raw.get("amount") is not None else None,

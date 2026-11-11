@@ -124,7 +124,12 @@ def execute(session: Session, run: ReconciliationRun) -> int:
 
             # The persisted coverage describes the latest rolling window, not a
             # complete historical index. Never call old unmatched rows missing.
-            window = coverage[(destination, "remittance")]["window_start_dt"]
+            # Missing PAYMENT evidence is meaningful only when the destination
+            # PAYMENTS dataset covers the remittance date. A successful remittance
+            # sync alone does not establish payment coverage.
+            coverage_dataset = ("payment" if decision.result == "PAYMENT_MISSING"
+                                else "remittance")
+            window = coverage[(destination, coverage_dataset)]["window_start_dt"]
             if rem.occurred_at is None or rem.occurred_at < window:
                 if decision.result in {"MISSING_ORIGIN", "MISSING_DESTINATION", "PAYMENT_MISSING"}:
                     decision = Decision("INSUFFICIENT_DATA",
@@ -137,9 +142,14 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                     "source_record_id": rem.source_record_id,
                     "candidate_ids": [c.id for c in candidates],
                     "destination": destination,
+                    "matched_payment_ids": [p.id for p in
+                                            payment_index.get((destination, rem.code), [])],
                     "verified_amount": decision.verified_amount,
                     "source_sync_finished_at": coverage[(rem.source, "remittance")]["finished_at"],
-                    "destination_sync_finished_at": coverage[(destination, "remittance")]["finished_at"],
+                    "destination_remittance_sync_finished_at": coverage[
+                        (destination, "remittance")]["finished_at"],
+                    "destination_payment_sync_finished_at": coverage[
+                        (destination, "payment")]["finished_at"],
                 },
                 checked_at=now(),
             ))

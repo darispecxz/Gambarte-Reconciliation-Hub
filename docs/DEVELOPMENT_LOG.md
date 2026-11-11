@@ -41,3 +41,18 @@
 - Causa: `Dockerfile` instalaba `pyproject.toml` **antes** de copiar `app`, a diferencia de GitHub Actions (que instalaba el proyecto completo).
 - Corrección: copiar el código primero, instalar el paquete completo y definir PYTHONPATH, caché pytest escribible y comando `python -m pytest`.
 - Reforzada CI: construir la imagen Docker y ejecutar pytest dentro de ella con usuario no root, además de las pruebas de integración MariaDB fuera de Docker.
+
+## 2026-11-11 — Validaciones reales de estructura y mapeo (sin escritura)
+
+- Bolivia y Chile MariaDB accesibles por Docker con transacciones READ ONLY.
+- Catálogos de moneda independientes confirmados; Bolivia ID 2=BOB,
+  Chile ID 2=CLP. En vista Chile moneda es texto y en pagos es FK numérica.
+- Relación de negocio confirmada: remesa en origen, pago en país destino,
+  clave `codigo` compartida; sin obligación de remesa espejo.
+- La consulta Bolivia remesa→pago local no encontró registros en siete días,
+  consistente con el flujo entre países.
+- Ajustado normalizador y listas de tipos aprobados, sin inferir direcciones
+  desde abreviaturas de localidad. Regla de cobertura del pago faltante
+  evalúa la sincronización del dataset destino `payment`, no `remittance`.
+- ETL sigue deshabilitado por defecto hasta completar estados, unicidad,
+  semántica de tipos y validación con casos controlados.

@@ -30,3 +30,51 @@ Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas co
 
 ## Configuración de dirección Bolivia
 `BOLIVIA_TO_CHILE_OPERATION_TYPES` es una lista de IDs separados por comas y **vacía por defecto**. Configurarla tras verificar el alcance de los tipos con casos reales y controlar giros a destinos distintos de Chile. Las remesas sin dirección verificada se clasifican como `INSUFFICIENT_DATA`.
+
+## Validaciones confirmadas (11-11-2026, consultas READ ONLY)
+
+- Se verificó la existencia de columnas usadas por las consultas de
+  Bolivia `remesa` y `pago`; Chile `tmp_reporte_remesa` y `pago`.
+- **Contrato de negocio confirmado:** el origen guarda la remesa; el destino
+  guarda el pago; el campo `codigo` coincide entre origen y destino.
+  **BO→CL** cruza Bolivia.`remesa` con Chile.`pago`.
+  **CL→BO** cruza Chile.`tmp_reporte_remesa` con Bolivia.`pago`.
+  No exigir remesa espejo en el país pagador. Comprobar ambigüedad del código.
+- Bolivia `moneda`: 1=USD, 2=BOB, 3=CLP (catalogadas también otras monedas).
+- Chile `moneda`: 1=USD, 2=CLP, 3=BOB; 18=USD (remesa dólares),
+  19=BOB (remesa bolivianos), 20=USD (cambio BO-CL).
+  Los IDs 18/19/20 tienen **modalidades de negocio distintas**; el ID fuente
+  se preserva como evidencia; no fusionar modalidades.
+- Chile `tmp_reporte_remesa.moneda` es VARCHAR (ejemplo observado BOB),
+  mientras que Chile `pago.mon_rec` y Bolivia `mon_rec` son IDs numéricos.
+- **`abr_ori` y `abr_des` de Chile son localidades/agencias**, por ejemplo
+  AGR, AIQ, ASP, ZFR, CBA, LPM. NO equivalen a códigos de país.
+- Consultas agregadas de siete días observaron Bolivia remesa tipo 16
+  (estado 0 y 1), pagos Bolivia tipos 3/4/7, Chile remesa tipos 3/5 y
+  pagos Chile tipo 3. Observar un tipo NO demuestra que sea exclusivo de
+  remesas transfronterizas; **no habilitar automáticamente**.
+- No se ha confirmado la semántica de estados, la unicidad de código,
+  la combinación única en vista Chile ni el significado contractual
+  de los importes. Evitar etiquetar MATCHED como conciliación de montos.
+- Las abreviaturas literales ARG y GYP se conservan como aparecen en el
+  catálogo de Chile, sin cambiarlas a ARS/PYG por suposición.
+
+## Implementación protegida
+
+`app/integrations/source.py` mantiene diccionarios de monedas **separados**
+por país, mientras la evidencia `raw.currency_id` conserva el identificador
+original. Direcciones se asignan exclusivamente por listas de tipos
+**aprobadas** y `SOURCE_MAPPING_VERIFIED=true`:
+
+```dotenv
+BOLIVIA_TO_CHILE_OPERATION_TYPES=
+CHILE_TO_BOLIVIA_OPERATION_TYPES=
+SOURCE_MAPPING_VERIFIED=false
+ENABLE_SOURCE_ETL=false
+```
+
+Estos valores deben seguir vacíos hasta analizar cada tipo de operación
+y confirmar estados, singularidad y cobertura. El motor ya cruza
+`(país_destino, codigo)` con pagos y conserva IDs de evidencia. Un
+`PAYMENT_MISSING` solo debe informarse si la ventana del dataset
+**pagos del destino** cubre la fecha de la remesa.
