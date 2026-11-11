@@ -91,3 +91,24 @@ docker compose run --rm api python -m scripts.audit_payment_age --days 7 --sampl
 
 **No activar** `ENABLE_SOURCE_ETL` ni `SOURCE_MAPPING_VERIFIED`
 hasta revisar estos resultados y la cobertura del backfill/solapamiento.
+
+## Desglose de antigüedad para dimensionar el backfill
+
+El mismo diagnóstico imprime bandas adicionales `paid_between_30_and_60_days_after_origin`,
+`paid_between_60_and_90_days_after_origin`,
+`paid_more_than_90_days_after_origin` y `max_lag_days`
+(máximo observado **entre los pagos de más de 30 días** de la muestra).
+No se modifica ninguna fuente ni se revelan códigos.
+
+```bash
+git pull origin feat/operational-reconciliation-phase-b
+docker compose build api
+docker compose run --rm api python -m scripts.audit_payment_age --days 7 --sample 150
+```
+
+La muestra BO→CL de 101 pagos de la semana, fechada 2026-11-11,
+mostró 6 pagos cuyo origen superaba 30 días; CL→BO fue una muestra
+truncada de 150. **No decidir 90 días de backfill sin observar el
+desglose**. Una importación retrospectiva completa tampoco resuelve
+todos los casos futuros: pagos antiguos con origen fuera de la ventana
+necesitan recuperación específica y control de cobertura.

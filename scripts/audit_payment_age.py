@@ -53,6 +53,15 @@ def summarize(payment_rows, origin_by_code):
             totals["origin_created_after_payment"] += 1
         elif lag > 30:
             totals["paid_more_than_30_days_after_origin"] += 1
+            # Detailed bands help size the initial import window without
+            # reporting any individual code or customer information.
+            if lag > 90:
+                totals["paid_more_than_90_days_after_origin"] += 1
+            elif lag > 60:
+                totals["paid_between_60_and_90_days_after_origin"] += 1
+            else:
+                totals["paid_between_30_and_60_days_after_origin"] += 1
+            totals["max_lag_days"] = max(totals["max_lag_days"], round(lag, 2))
         elif lag > 7:
             totals["paid_between_7_and_30_days_after_origin"] += 1
         else:
@@ -107,10 +116,13 @@ def audit_one(direction, connections, days, limit):
     codes = sorted({str(code) for code, _ in payment_rows if code is not None})
     origins = fetch_origins(connections[origin_country], origin_table, origin_types, codes) if codes else {}
     result = summarize(payment_rows, origins)
-    print(f"\\n{name} | payment_country={pay_country} | sample_limit={limit} | days={days}")
+    print(f"\n{name} | payment_country={pay_country} | sample_limit={limit} | days={days}")
     print(f"sample_is_capped={len(payment_rows) == limit}")
     for key in (
         "sampled_payments", "paid_more_than_30_days_after_origin",
+        "paid_between_30_and_60_days_after_origin",
+        "paid_between_60_and_90_days_after_origin",
+        "paid_more_than_90_days_after_origin", "max_lag_days",
         "paid_between_7_and_30_days_after_origin",
         "paid_within_7_days_or_clock_skew", "origin_not_found_in_selected_types",
         "ambiguous_origin_code", "unknown_dates", "origin_created_after_payment",
@@ -141,7 +153,7 @@ def main():
         finally:
             for connection in connections.values():
                 connection.rollback()
-    print("\\nNOTES: Sample only. Missing origin is not proof of loss.")
+    print("\nNOTES: Sample only. Missing origin is not proof of loss.")
     print("Dates are source-local and not normalized across countries.")
     print("Do not enable ETL based on this diagnostic alone.")
 
