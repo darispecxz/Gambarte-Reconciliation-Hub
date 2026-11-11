@@ -81,3 +81,58 @@ def test_idempotent_ingestion_and_operational_match():
             )
         )).all()
         assert len(events) == 2
+
+
+def test_bolivia_origin_chile_payment_without_mirrored_remittance():
+    # Real-world contract confirmed: BO.remesa.codigo == CL.pago.codigo.
+    # No CL.remesa is required. Use only the isolated CI database.
+    code = "TEST-BO-CL-CROSS-BORDER"
+    bo_remittance = Extracted(
+        source="BOLIVIA", dataset="remittance", source_id="16:41005",
+        code=code, status="PAID", amount=Decimal("100"),
+        currency="USD", raw={"source_pk": 41005, "operation_type": 16,
+                             "code": code, "currency_id": 1, "status_code": 1},
+        operation_type=16, direction="BO_TO_CL", occurred_at=now(), source_pk=41005,
+    )
+    cl_payment = Extracted(
+        source="CHILE", dataset="payment", source_id="3:42005",
+        code=code, status="RECORDED", amount=Decimal("90000"),
+        currency="CLP", raw={"source_pk": 42005, "operation_type": 3,
+                             "code": code, "currency_id": 2},
+        operation_type=3, occurred_at=now(), source_pk=42005,
+    )
+    with SessionLocal() as db:
+        ingest(db, bo_remittance)
+        ingest(db, cl_payment)
+        for country in ("BOLIVIA", "CHILE"):
+            for dataset in ("remittance", "payment"):
+                cursor = db.scalar(select(SyncCursor).where(
+                    SyncCursor.source == country, SyncCursor.dataset == dataset
+                ))
+                if cursor is None:
+                    db.add(SyncCursor(
+                        source=country, dataset=dataset,
+                        window_start=now() - timedelta(days=7),
+                        scan_started_at=now(), last_success_at=now(),
+                        in_progress=False, last_source_id=0, last_operation_id=0,
+                    ))
+                db.add(SyncRun(
+                    source=country, dataset=dataset, status="COMPLETED",
+                    count=0, started_at=now(), finished_at=now(),
+                ))
+        run = ReconciliationRun(status="PENDING")
+        db.add(run)
+        db.commit()
+        execute(db, run)
+        original = db.scalar(select(Remittance).where(
+            Remittance.source == "BOLIVIA", Remittance.code == code
+        ))
+        matches = db.scalars(select(ReconciliationMatch).where(
+            ReconciliationMatch.run_id == run.id,
+            ReconciliationMatch.remittance_id == original.id,
+        )).all()
+        assert len(matches) == 1
+        assert matches[0].result == "MATCHED"
+        assert matches[0].counterpart_id is None
+        assert len(matches[0].evidence["matched_payment_ids"]) == 1
+        assert matches[0].evidence["verified_amount"] is False

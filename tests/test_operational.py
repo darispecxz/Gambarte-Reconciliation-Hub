@@ -67,7 +67,7 @@ def test_infer_chile_direction_and_unknown():
     assert infer_direction({"origin_country": "", "destination_country": "BOL"}) is None
 
 
-def test_internal_currency_ids_not_mislabeled_iso():
+def test_verified_internal_currency_ids_map_to_iso():
     row = normalize("BOLIVIA", "remittance", {
         "source_pk": 20, "operation_type": 4, "code": 123,
         "status_code": 1, "amount": Decimal("100.00"),
