@@ -54,3 +54,40 @@ docker compose run --rm api python -m pytest -q
 ```
 
 El Dockerfile copia el código antes de ejecutar `pip install .[dev]`. `PYTHONPATH=/service` permite localizar `app` desde el ejecutable pytest y `cache_dir=/tmp/gambarte-pytest-cache` evita escribir archivos de cache en la carpeta `/service` que pertenece a root. El contenedor se sigue ejecutando con UID 10001, no con root.
+
+## Validación cruzada de pagos tardíos (solo lectura)
+
+Antes de activar los workers ETL se puede ejecutar desde el contenedor
+`api` un **muestreo limitado** por fecha de pago:
+
+```bash
+docker compose run --rm api python -m scripts.audit_payment_age --days 7 --sample 150
+```
+
+- BO→CL: pagos de Chile `pago` 3/5/6/8 con operaciones de origen
+  Bolivia `remesa` 4/16 mediante `codigo`.
+- CL→BO: pagos de Bolivia `pago` 4/7 con origen
+  Chile `tmp_reporte_remesa` 3/5/6/8 mediante `codigo`.
+- Selecciona como máximo 150 pagos recientes **por dirección**, consulta
+  códigos en bloques de 20 y solo muestra contadores agregados.
+- Si `sample_is_capped=True`, el resultado es una muestra truncada y
+  no se debe extrapolar como porcentaje del período completo.
+- Imprime pagos con origen de más de 30 días, 7–30 días, <=7 días,
+  códigos ambiguos, sin origen dentro de tipos seleccionados, o fechas
+  inconsistentes. Una ausencia de origen **no prueba un error**:
+  puede haber modalidades distintas, códigos no globalmente únicos
+  o registros cancelados/reconstruidos.
+- Las fechas entre bases pueden tener zonas horarias diferentes:
+  valores cercanos al límite deben revisarse antes de atribuir días exactos.
+- Abre transacciones `START TRANSACTION READ ONLY` en ambas fuentes,
+  termina con ROLLBACK y cierra las conexiones, sin activar el ETL.
+- Si encuentra demasiadas filas por código, detiene el proceso en vez
+  de clasificar registros incompletos.
+- No certifica saldos, importes, ausencia de pagos ni integridad total.
+  No garantiza estabilidad de dos bases remotas durante la muestra.
+- Ejecutarlo fuera de las horas pico: la búsqueda de origen por `codigo`
+  puede requerir escaneos si no existen índices adecuados. Revisar
+  `EXPLAIN` y permisos SELECT-only antes de ampliar el volumen.
+
+**No activar** `ENABLE_SOURCE_ETL` ni `SOURCE_MAPPING_VERIFIED`
+hasta revisar estos resultados y la cobertura del backfill/solapamiento.

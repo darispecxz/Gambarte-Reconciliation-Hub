@@ -121,3 +121,7 @@ instantánea consistente entre páginas si la fuente cambia mientras
 se pagina. La ventana de solapamiento mitiga correcciones recientes;
 cambios antiguos fuera del solapamiento requieren backfill explícito.
 La comprobación de integridad histórica sigue pendiente.
+
+## Auditoría de pagos tardíos previa al ETL
+
+Ejecutar el muestreo manual de solo lectura documentado en `docs/OPERATIONS.md`. Es una muestra de pagos recientes, no un certificado de cobertura. Si aparecen pagos con origen de más de 30 días, el backfill inicial de 30 días y las siguientes ventanas de 7 días requieren revisión antes de habilitar ETL.
