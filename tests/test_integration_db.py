@@ -136,3 +136,51 @@ def test_bolivia_origin_chile_payment_without_mirrored_remittance():
         assert matches[0].counterpart_id is None
         assert len(matches[0].evidence["matched_payment_ids"]) == 1
         assert matches[0].evidence["verified_amount"] is False
+
+
+def test_historical_cutoff_retains_late_payment_without_false_discrepancy():
+    # Create source record before cutoff, destination payment after cutoff.
+    code = "TEST-STAGE-B-ASOF-LATE"
+    with SessionLocal() as db:
+        ingest(db, Extracted(
+            source="BOLIVIA", dataset="remittance", source_id="16:50111",
+            code=code, status="PAID", amount=Decimal("200"), currency="USD",
+            raw={"source_pk": 50111, "operation_type": 16, "code": code,
+                 "status_code": 1}, operation_type=16, direction="BO_TO_CL",
+            occurred_at=now() - timedelta(days=2), source_pk=50111,
+        ))
+        ingest(db, Extracted(
+            source="CHILE", dataset="payment", source_id="3:50112",
+            code=code, status="RECORDED", amount=Decimal("120000"), currency="CLP",
+            raw={"source_pk": 50112, "operation_type": 3, "code": code},
+            operation_type=3, occurred_at=now(), source_pk=50112,
+        ))
+        for source_name in ("BOLIVIA", "CHILE"):
+            for dataset in ("remittance", "payment"):
+                cursor = db.scalar(select(SyncCursor).where(
+                    SyncCursor.source == source_name,
+                    SyncCursor.dataset == dataset,
+                ))
+                if cursor is None:
+                    db.add(SyncCursor(source=source_name, dataset=dataset,
+                                      window_start=now() - timedelta(days=7),
+                                      scan_started_at=now(), last_success_at=now(),
+                                      in_progress=False, last_source_id=0,
+                                      last_operation_id=0))
+                db.add(SyncRun(source=source_name, dataset=dataset,
+                               status="COMPLETED", count=0,
+                               started_at=now(), finished_at=now()))
+        run = ReconciliationRun(status="PENDING", cutoff_at=now() - timedelta(days=1))
+        db.add(run)
+        db.commit()
+        execute(db, run)
+        rem = db.scalar(select(Remittance).where(
+            Remittance.source == "BOLIVIA", Remittance.code == code
+        ))
+        match = db.scalar(select(ReconciliationMatch).where(
+            ReconciliationMatch.run_id == run.id,
+            ReconciliationMatch.remittance_id == rem.id,
+        ))
+        assert match.result == "PENDING_AS_OF"
+        assert match.evidence["matched_payment_ids"] == []
+        assert len(match.evidence["payments_after_cutoff_ids"]) == 1
