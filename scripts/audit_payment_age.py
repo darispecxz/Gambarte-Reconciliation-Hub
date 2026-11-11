@@ -32,7 +32,7 @@ def connect_readonly(country: str):
     )
 
 
-def summarize(payment_rows, origin_by_code):
+def summarize(payment_rows, origin_by_code, origin_now=None):
     """Classify one bounded sample of payments without exposing any identifiers."""
     totals = Counter()
     for code, paid_at in payment_rows:
@@ -48,6 +48,19 @@ def summarize(payment_rows, origin_by_code):
         if not isinstance(created_at, datetime) or not isinstance(paid_at, datetime):
             totals["unknown_dates"] += 1
             continue
+        if origin_now is not None:
+            age = (origin_now - created_at).total_seconds() / 86400
+            if age > 90:
+                totals["origin_older_than_90_days_at_audit"] += 1
+            elif age > 60:
+                totals["origin_between_60_and_90_days_at_audit"] += 1
+            elif age > 30:
+                totals["origin_between_30_and_60_days_at_audit"] += 1
+            else:
+                totals["origin_within_30_days_at_audit"] += 1
+            totals["max_origin_age_days_at_audit"] = max(
+                totals["max_origin_age_days_at_audit"], round(age, 2)
+            )
         lag = (paid_at - created_at).total_seconds() / 86400
         if lag < -1:
             totals["origin_created_after_payment"] += 1
@@ -115,11 +128,20 @@ def audit_one(direction, connections, days, limit):
     )
     codes = sorted({str(code) for code, _ in payment_rows if code is not None})
     origins = fetch_origins(connections[origin_country], origin_table, origin_types, codes) if codes else {}
-    result = summarize(payment_rows, origins)
+    with connections[origin_country].cursor() as cur:
+        cur.execute("SELECT NOW()")
+        origin_now = cur.fetchone()[0]
+    result = summarize(payment_rows, origins, origin_now=origin_now)
     print(f"\n{name} | payment_country={pay_country} | sample_limit={limit} | days={days}")
     print(f"sample_is_capped={len(payment_rows) == limit}")
     for key in (
-        "sampled_payments", "paid_more_than_30_days_after_origin",
+        "sampled_payments",
+        "origin_within_30_days_at_audit",
+        "origin_between_30_and_60_days_at_audit",
+        "origin_between_60_and_90_days_at_audit",
+        "origin_older_than_90_days_at_audit",
+        "max_origin_age_days_at_audit",
+        "paid_more_than_30_days_after_origin",
         "paid_between_30_and_60_days_after_origin",
         "paid_between_60_and_90_days_after_origin",
         "paid_more_than_90_days_after_origin", "max_lag_days",

@@ -38,3 +38,12 @@ def test_breakdown_above_30_days_and_max_lag():
     assert result["paid_between_60_and_90_days_after_origin"] == 1
     assert result["paid_more_than_90_days_after_origin"] == 1
     assert result["max_lag_days"] == 91
+
+def test_origin_age_at_audit_is_not_payment_delay():
+    now = datetime(2026, 11, 11, 14, 0)
+    payments = [("a", now - timedelta(days=20))]
+    origin = {"a": [now - timedelta(days=65)]}
+    result = summarize(payments, origin, origin_now=now)
+    assert result["origin_between_60_and_90_days_at_audit"] == 1
+    assert result["paid_between_30_and_60_days_after_origin"] == 1
+    assert result["max_origin_age_days_at_audit"] == 65

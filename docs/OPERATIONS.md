@@ -112,3 +112,61 @@ truncada de 150. **No decidir 90 días de backfill sin observar el
 desglose**. Una importación retrospectiva completa tampoco resuelve
 todos los casos futuros: pagos antiguos con origen fuera de la ventana
 necesitan recuperación específica y control de cobertura.
+
+## Preflight de extractores: una página, sin ETL ni persistencia
+
+Antes de permitir una importación limitada, ejecutar el diagnóstico que
+utiliza la **misma SQL de los cuatro extractores** (no SQL simplificada).
+No inicia el worker, no realiza `ingest()`, no escribe registros ni
+cursores centrales, solo usa `START TRANSACTION READ ONLY` y rollback.
+Rechaza la ejecución si `ENABLE_SOURCE_ETL` o
+`SOURCE_MAPPING_VERIFIED` son true.
+
+Primero inspeccionar solo el plan de Chile:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset remittance --days 60 --limit 50 --explain-only
+```
+
+Si el plan es razonable, ejecutar **una sola página**:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset remittance --days 60 --limit 50
+```
+
+Luego revisar de manera independiente los otros tres datasets:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset remittance --days 60 --limit 50 --explain-only
+docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset payment --days 60 --limit 50 --explain-only
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset payment --days 60 --limit 50 --explain-only
+```
+
+Solo después de revisar los planes, retirar `--explain-only`
+individualmente. Usa un máximo de 100 filas por ejecución, 90 días
+de retrospectiva y transacciones de solo lectura. Muestra acceso,
+índice, filas estimadas, elapsed, total y estados agregados. No mostrar
+códigos, cantidades de dinero ni identidades de clientes. Los tiempos
+son medidas de una sola página, no un benchmark de todo el ETL.
+SQL de otros países/tipos aún podría tener columnas o índices
+incompatibles: este preflight debe exponer esos errores sin activar
+ingesta.
+
+## Cobertura por antigüedad al momento de importar
+
+`scripts.audit_payment_age` ahora distingue expresamente
+`max_lag_days` (diferencia *pago menos creación*) y
+`max_origin_age_days_at_audit` (*NOW() de la DB de origen menos
+creación*). La segunda determina si un backfill de 30/60/90 días
+incluiría los orígenes encontrados en la muestra. `sample_is_capped`
+advierte de truncamiento.
+
+Este muestreo no comprueba modificaciones históricas ni asegura
+que todos los documentos se puedan recuperar, y un backfill
+retrospectivo finito no reemplaza reconciliación de cobertura y
+resolución puntual segura de pagos tardíos.
+
+**Fase siguiente aún pendiente:** una importación explícita, de un
+solo dataset, a una DB central aislada y con límites de filas,
+sin worker automático. Debe esperar a que todos los preflight estén
+revisados y se haya validado la identidad/reglas de negocio.
