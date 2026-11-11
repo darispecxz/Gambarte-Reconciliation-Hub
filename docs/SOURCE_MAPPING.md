@@ -1,21 +1,29 @@
-# Mapeos de origen: revisión obligatoria
+# Mapeo de fuentes: contrato provisional
 
-Los SQL de `app/integrations/source.py` derivan del POC .NET y los ZIP de PHP. No se ha validado su compatibilidad con bases actuales.
+Los sistemas originales consultados corresponden a una versión histórica de PHP. El código del ETL **no debe habilitarse hasta revisar esquemas reales y mapeos**.
 
-| Sistema | Tabla | Campos usados | Observaciones |
+| Fuente | Objeto | Atributos proyectados | Estado |
 |---|---|---|---|
-| Bolivia | `remesa` | id_remesa, codigo, estado, monto, mon_rec, id_operacion, fechas | id_operacion provisional: 4, 16 |
-| Bolivia | `pago` | id_pago, codigo, monto, mon_rec, id_operacion, fec_crea_pago | id_operacion provisional: 4, 7 |
-| Chile | `tmp_reporte_remesa` | id_remesa, codigo, envio, moneda, estado, abr_ori, abr_des, fechas | **Consolidación autoritativa de remesa y deposito_bancario** |
-| Chile | `pago` | id_pago, codigo, monto, id_operacion, fec_crea_pago | Operaciones provisionales: 3, 5, 6, 8 |
+| Bolivia | remesa | id_remesa, codigo, estado, monto, mon_rec, id_operacion, fechas | Por verificar |
+| Bolivia | pago | id_pago, codigo, monto, mon_rec, id_operacion, fec_crea_pago | Por verificar |
+| Chile | tmp_reporte_remesa | id_remesa, codigo, estado, envio, moneda, id_operacion, abr_ori, abr_des, fechas | Fuente consolidada confirmada conceptualmente |
+| Chile | pago | id_pago, codigo, monto, mon_rec, id_operacion, fec_crea_pago | Por verificar |
 
-## Importante
-1. Confirmar qué direcciones representa realmente cada `id_operacion`. En el POC Chile contiene varias operaciones; NO puede deducirse únicamente por el país de origen.
-2. Confirmar `id_remesa` único para registros de depósito bancario incorporados en `tmp_reporte_remesa`. Podría requerirse clave compuesta.
-3. Confirmar si código cambia en anulaciones y cómo recuperar su identidad estable.
-4. Comprobar que `fec_mod_remesa` cambia por cada modificación y definir un backfill completo.
-5. Confirmar moneda/unidades de `monto`, `envio`, `total_cambio` y `pago.total`. No se introduce tipo de cambio fijo.
-6. Documentar pagos parciales y múltiples movimientos legítimos.
-7. Añadir mapeo de caja y contabilidad (co_asientos/co_partidas), con vínculos por IDs estructurados, no búsquedas parciales en conceptos.
+## Regla de Chile
+`tmp_reporte_remesa` centraliza información de `remesa` y `deposito_bancario` y se debe utilizar como fuente principal del ETL. No sustituirla por lectura exclusiva de `remesa`.
 
-Hasta cerrar estas verificaciones, los reportes del motor son **hallazgos preliminares**.
+## Comprobaciones necesarias antes de activar ETL
+1. Verificar la unicidad de la combinación `(id_remesa, id_operacion)` dentro de la vista/tablas consolidadas, incluyendo depósitos bancarios.
+2. Confirmar tipos de operación Bolivia `(4,16)`, pagos `(4,7)`, Chile `(3,5,6,8)`. Son hipótesis del POC, no verdad garantizada.
+3. Confirmar si `estado=1` es realmente PAID para cada tipo de operación y en cada país, y documentar las transiciones.
+4. Verificar `abr_ori`/`abr_des` y direcciones reales para Bolivia; actualmente los registros Bolivia no informan dirección por defecto.
+5. Identificar código ISO asociado a `mon_rec` y `moneda`. Un entero (FK) no debe convertirse en código de moneda mediante supuestos.
+6. Distinguir `monto`, `envio`, `total`, `total_cambio` y tipo de cambio. No comparar valores sin confirmar su misma función.
+7. Confirmar fechas, anulaciones, correcciones y pago tardío; validar que la ventana retrospectiva detecta estos cambios.
+8. Definir si `codigo` puede repetirse por tipo/dirección/año y si cambia por anulación.
+9. Definir pagos parciales y operaciones con múltiples depósitos sin marcar falsos duplicados.
+10. Confirmar permisos SELECT, TLS/red y índices para paginación keyset.
+11. Ajustar `app/integrations/source.py` y pruebas contractuales; solo entonces activar `ENABLE_SOURCE_ETL=true` y `SOURCE_MAPPING_VERIFIED=true`.
+
+## Enfoque de validación
+Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas con `SHOW CREATE TABLE`, índices y un conjunto pequeño de casos conocidos (envío, pago, devolución, depósito, anulación); no copiar datos privados a GitHub. La herramienta no modifica registros de Bolivia/Chile.

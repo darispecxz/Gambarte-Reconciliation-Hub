@@ -1,23 +1,39 @@
-# Operación y despliegue (entorno de pruebas)
+# Operación y seguridad — Etapa B
 
-## Arranque
-1. `cp .env.example .env`.
-2. Cambiar **API_KEY**, DB_PASSWORD y MARIADB_ROOT_PASSWORD por valores aleatorios robustos.
-3. `docker compose up -d --build`.
-4. `docker compose run --rm api alembic upgrade head`.
-5. `curl http://127.0.0.1:8000/api/v1/health`.
-6. `curl -H "X-API-Key: <clave>" http://127.0.0.1:8000/api/v1/sync/status`.
-7. `docker compose run --rm api pytest -q`.
+## Instalación de pruebas
+```bash
+cp .env.example .env
+# Cambiar API_KEY, DB_PASSWORD y MARIADB_ROOT_PASSWORD
+docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8000/api/v1/health
+docker compose run --rm api pytest -q
+```
 
-## Antes de fuentes reales
-- Obtener únicamente usuarios SQL de lectura.
-- Confirmar disponibilidad y TLS/VPN; no exponer puertos 3306 a internet.
-- Probar consultas con LIMIT en copias de datos o entornos de prueba.
-- Validar índices, claves, fechas y tipos de operación.
-- Revisar privilegios de los contenedores y preservar MariaDB mediante backups probados.
-- Configurar `ENVIRONMENT=production` para deshabilitar docs públicos; TLS a través de proxy.
-- Monitorizar `sync_runs` y errores.
-- No considerar hallazgos preliminares equivalentes a cierres o saldos financieros.
+El servicio `migrate` aplica `alembic upgrade head` automáticamente antes de iniciar `api`, `etl` y `reconciler`.
 
-## Recuperación
-Revisar `docker compose logs etl reconciler`; no eliminar `source_versions`. La ingesta utiliza clave (origen, dataset, id) y hash para evitar duplicados por relectura. Para recargas históricas, añadir rangos configurables sin sobreescribir el historial.
+El ETL no se habilita automáticamente: `ENABLE_SOURCE_ETL=false` y `SOURCE_MAPPING_VERIFIED=false`. Primero revisar `SOURCE_MAPPING.md`.
+
+## Acceso
+API requiere cabecera `X-API-Key` excepto `/health`. No exponer directamente a internet sin reverse proxy HTTPS, segmentación de red, credenciales rotadas y control de acceso. En `ENVIRONMENT=production` se deshabilita OpenAPI público.
+
+## Operación
+- `docker compose logs -f etl reconciler`
+- `docker compose logs migrate`
+- `GET /api/v1/sync/status`: últimas ejecuciones.
+- `GET /api/v1/sync/cursors`: última cobertura, avance y si existe una ventana inacabada.
+- `POST /api/v1/reconciliations`: encola ejecución, devuelve ID.
+- `GET /api/v1/reconciliations/{id}/matches`: evidencias por operación.
+- Un proceso de ingesta fallido deja el cursor en progreso; el siguiente intenta continuar desde la última página confirmada.
+
+## Preproducción
+- Validar con pruebas sintéticas la migración 0001→0002 y reinstalación desde cero.
+- Utilizar cuentas SQL SELECT-only en Bolivia y Chile, nunca root.
+- Proteger secretos mediante variables/secret manager del servidor, y no comitear `.env`.
+- Mantener DB central en red interna Docker; volumen persistente, respaldos cifrados, pruebas de restauración.
+- Ejecución en una sola instancia por worker hasta implementar leases.
+- Configurar `MAX_SOURCE_AGE_MINUTES` acorde a frecuencia del ETL; fuente fallida bloquea la conciliación.
+- La API no genera balances financieros, no modifica remesas originales y no aprueba liquidaciones.
+
+## Diagnóstico
+Si una solicitud queda `BLOCKED`, revisar `/sync/status` y `/sync/cursors`. No interpretar `MISSING_DESTINATION` fuera de la cobertura registrada. Correr backfill histórico después de validar fechas y claves.

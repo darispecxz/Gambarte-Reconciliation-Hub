@@ -1,35 +1,39 @@
-# Roadmap / mejoras
+# Roadmap y mejoras priorizadas
 
-## P0 — antes de despliegue operacional
-- [ ] Verificar fuente `tmp_reporte_remesa`, datos de depósitos, direcciones, IDs y códigos.
-- [ ] Confirmar esquema e índices reales de remesa/pago en Bolivia y Chile.
-- [ ] Sustituir LIMIT/OFFSET por paginación keyset con cursor persistido y watermark.
-- [ ] Crear backfill histórico, reconciliación retrospectiva y control de lotes incompletos.
-- [ ] Correlación robusta por sistema, tipo, dirección, identidad original y versión.
-- [ ] Comprobar frescura/consistencia de fuentes antes de reportar hallazgos.
-- [ ] Distinguir pagos parciales legítimos de duplicados.
-- [ ] Test de integración MariaDB + migraciones + ETL con datos sintéticos.
-- [ ] Autenticación por servicio y roles, rate limits, auditoría y rotación de secretos.
-- [ ] Leases para jobs; idempotencia y recuperación ante crash/reinicio.
-- [ ] Instrumentación, alertas, backups y ensayos de restauración.
+## P0 — requisitos para producción
+- [x] Migración 0002 y tablas de conciliación operativa.
+- [x] ETL keyset con cursor de reanudación por página.
+- [x] Proyecciones normalizadas y trazabilidad por source_links.
+- [x] Eventos observados y resultados individuales por ejecución.
+- [x] API de búsqueda de remesas, pagos, eventos y coincidencias.
+- [x] Validación de frescura de sincronización y bloqueo de fuentes fallidas.
+- [x] Pruebas de dominio + CI MariaDB temporal (código configurado; comprobar ejecución).
+- [ ] Confirmar esquemas y campos reales de Chile/Bolivia, incluidas las columnas de `tmp_reporte_remesa` y `pago`.
+- [ ] Confirmar estados, direcciones y tipos de operación; mejorar correlación por más de `codigo`.
+- [ ] Comparación de importes con concepto, moneda de pago esperada y tolerancia verificada.
+- [ ] Garantizar fuente y vista consistentes con snapshot/CDC y backfills profundos.
+- [ ] Concurrencia de workers: `GET_LOCK`, leases con heartbeat o claims transaccionales.
+- [ ] Control de acceso por rol/token, límites HTTP, rotación de API keys, auditoría de administración.
+- [ ] Alertas de jobs fallidos, SLO, logs estructurados, métricas y trazas.
+- [ ] Prueba de Docker local y ensayos de recuperación; respaldo/restauración programados.
+- [ ] Pruebas con muestras sintéticas basadas en operación real, no con datos personales.
 
-## P1 — conciliación operativa
-- [ ] Historial de envío, pago, anulación y devolución, fechas y estados de corte.
-- [ ] Cruces de caja Bolivia `saldo_caja` y Chile `saldo_unidad`.
-- [ ] Conciliación de depósito bancario con evidencia de pago.
-- [ ] Reglas de tolerancia por moneda y cotizaciones históricas explícitas.
-- [ ] Reportes diarios, excepciones y PDF/Excel.
-- [ ] Comparación controlada del reporte agosto 2025.
+## P1 — completar controles operativos
+- [ ] Validar múltiples pagos y depósitos parciales; tolerancias CLP/BOB/USD.
+- [ ] Revisar anulaciones que alteran código y estados de remesa.
+- [ ] Cruces de movimientos de caja `saldo_caja` Bolivia y `saldo_unidad` Chile.
+- [ ] Reportes diarios de envío, pendiente, pagado, devuelto, anulado.
+- [ ] CSV/Excel/PDF de resultados y diferencias.
+- [ ] Reproducibilidad temporal con snapshot de origen y corte común.
 
-## P2 — contable y financiera
-- [ ] Extraer `co_asientos` y `co_partidas`, vinculaciones de operación-asiento, Debe/Haber.
-- [ ] Cuentas por cobrar/pagar entre Bolivia y Chile y comisiones separadas.
-- [ ] Obligaciones bilaterales y saldos iniciales certificados por moneda.
-- [ ] Compensaciones con doble aplicación simétrica y aprobaciones.
-- [ ] Transferencias bancarias con confirmación y conciliación de extractos.
-- [ ] Cierres diarios auditables e inmutables.
+## P2 — contabilidad y finanzas
+- [ ] Integración de `co_asientos` y `co_partidas`, Debe/Haber y vínculo estructurado.
+- [ ] Reglas de contrato de corresponsalía y comisiones por participación.
+- [ ] Obligaciones CL↔BO por moneda, contraparte y fecha de devengo.
+- [ ] Libro de compensaciones con aplicaciones dobles, transferencias y comprobantes.
+- [ ] Saldos iniciales auditados, cierres diarios inmutables y aprobaciones.
 
-## P3 — automatización
-- [ ] Webhooks firmados y contratos OpenAPI para consumidores externos.
-- [ ] Tablero de auditoría y métricas.
-- [ ] CI/CD con pruebas obligatorias, despliegue progresivo y rollback.
+## P3 — plataforma
+- [ ] Webhooks firmados y API para automatizaciones externas.
+- [ ] Dashboard central de operaciones y discrepancias.
+- [ ] Escalado horizontal con una cola y garantías de entrega.
