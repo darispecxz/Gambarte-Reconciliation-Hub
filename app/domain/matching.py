@@ -61,6 +61,8 @@ def decide(
             return Decision("STATUS_MISMATCH", "Counterpart direction conflicts")
         if counterpart.status == "UNKNOWN":
             return Decision("INSUFFICIENT_DATA", "Counterpart status unverified")
+        if original.status == "PAID" and counterpart.status != "PAID":
+            return Decision("STATUS_MISMATCH", "Mirrored counterpart status is not paid")
 
     if cutoff_at is not None:
         # Unknown dates cannot safely prove presence at a historical cutoff.
