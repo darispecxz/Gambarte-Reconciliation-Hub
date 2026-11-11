@@ -131,9 +131,11 @@ def test_direction_requires_approved_country_specific_operation_types():
             "source_pk": 2, "operation_type": 3, "code": 456,
             "status_code": 0, "amount": Decimal("10"),
             "currency_id": "BOB", "origin_country": "AGR", "destination_country": "CBA",
+            "cursor_destination": 11,
         })
         other = normalize("CHILE", "remittance", {
             "source_pk": 3, "operation_type": 5, "code": 789,
+            "cursor_destination": 12,
             "status_code": 0, "amount": Decimal("10"),
             "currency_id": "BOB",
         })
@@ -185,6 +187,7 @@ def test_all_poc_status_codes():
 def test_chile_negative_code_overrides_status_to_cancelled():
     row = normalize("CHILE", "remittance", {
         "source_pk": 11, "operation_type": 3, "code": -123,
+        "cursor_destination": 1,
         "status_code": 1, "amount": Decimal("100"), "currency_id": "BOB",
     })
     assert row.code == "-123"
