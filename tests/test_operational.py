@@ -79,3 +79,13 @@ def test_internal_currency_ids_not_mislabeled_iso():
 
 def test_json_safe():
     assert safe({"amount": Decimal("12.30")}) == {"amount": "12.30"}
+
+def test_payment_in_destination_without_mirrored_remittance():
+    # Common legacy pattern: only source remesa plus destination pago.
+    result = decide(operation(), [], [payment()])
+    assert result.result == "MATCHED"
+    assert "no mirrored remittance required" in result.reason
+
+
+def test_payment_missing_without_mirrored_remittance():
+    assert decide(operation(), [], []).result == "PAYMENT_MISSING"

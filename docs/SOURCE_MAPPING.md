@@ -27,3 +27,6 @@ Los sistemas originales consultados corresponden a una versión histórica de PH
 
 ## Enfoque de validación
 Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas con `SHOW CREATE TABLE`, índices y un conjunto pequeño de casos conocidos (envío, pago, devolución, depósito, anulación); no copiar datos privados a GitHub. La herramienta no modifica registros de Bolivia/Chile.
+
+## Configuración de dirección Bolivia
+`BOLIVIA_TO_CHILE_OPERATION_TYPES` es una lista de IDs separados por comas y **vacía por defecto**. Configurarla tras verificar el alcance de los tipos con casos reales y controlar giros a destinos distintos de Chile. Las remesas sin dirección verificada se clasifican como `INSUFFICIENT_DATA`.

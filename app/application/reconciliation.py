@@ -111,12 +111,10 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                     # Multiple same-code origin rows cannot be safely paired.
                     if len(index[(origin, rem.code)]) > 1:
                         decision = Decision("MANUAL_REVIEW", "Ambiguous origin code")
-                    elif not candidates:
-                        other = index.get((destination, rem.code), [])
-                        decision = (Decision("STATUS_MISMATCH", "Contradictory direction")
-                                    if other else Decision("MISSING_DESTINATION",
-                                                           "No destination operation"))
+                    elif not candidates and index.get((destination, rem.code)):
+                        decision = Decision("STATUS_MISMATCH", "Counterpart has a contradictory direction")
                     else:
+                        # Destination may have only a payment, not a mirrored remesa.
                         decision = decide(evidence, [_operation(c) for c in candidates],
                                           payment_index.get((destination, rem.code), []))
             else:

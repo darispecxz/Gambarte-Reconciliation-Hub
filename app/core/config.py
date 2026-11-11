@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     chile_db_password: str = ""
     enable_source_etl: bool = False
     source_mapping_verified: bool = False
+    # Empty by default: only after verifying that these operation types denote
+    # remittances originating Bolivia and destined for Chile may they be enabled.
+    bolivia_to_chile_operation_types: str = ""
     sync_interval_seconds: int = 300
     reconcile_interval_seconds: int = 30
     backfill_days: int = 30

@@ -136,6 +136,12 @@ def normalize(source: str, dataset: str, raw: dict) -> Extracted:
     # Unknown currency identity is excluded from monetary comparison.
     if currency not in {"USD", "BOB", "CLP"}:
         currency = None
+    direction = infer_direction(raw) if dataset == "remittance" else None
+    if dataset == "remittance" and source == "BOLIVIA" and direction is None:
+        approved = {int(item.strip()) for item in get_settings().bolivia_to_chile_operation_types.split(",")
+                    if item.strip().isdigit()}
+        if get_settings().source_mapping_verified and operation in approved:
+            direction = "BO_TO_CL"
     return Extracted(
         source=source,
         dataset=dataset,
@@ -147,7 +153,7 @@ def normalize(source: str, dataset: str, raw: dict) -> Extracted:
         currency=currency,
         raw=raw,
         operation_type=operation,
-        direction=infer_direction(raw) if dataset == "remittance" else None,
+        direction=direction,
         occurred_at=raw.get("occurred_at"),
         source_pk=pk,
     )

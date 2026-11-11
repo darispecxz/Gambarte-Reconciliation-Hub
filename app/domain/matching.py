@@ -46,21 +46,22 @@ def decide(
         return Decision("INSUFFICIENT_DATA", "Direction or source status is unverified")
     if len(counterparts) > 1:
         return Decision("MANUAL_REVIEW", "Multiple counterpart remittances share code and direction")
-    if not counterparts:
-        return Decision("MISSING_DESTINATION", "Destination remittance not found in covered period")
-    counterpart = counterparts[0]
-    if not counterpart.direction:
-        return Decision("INSUFFICIENT_DATA", "Destination direction is unverified")
-    if counterpart.direction != original.direction:
-        return Decision("STATUS_MISMATCH", "Destination has a conflicting direction")
-    if counterpart.status == "UNKNOWN":
-        return Decision("INSUFFICIENT_DATA", "Destination status mapping is unverified")
+    # Legacy systems do not necessarily store a mirrored remittance in the
+    # country that PAYS it. A destination payment can be the authoritative evidence.
+    if counterparts:
+        counterpart = counterparts[0]
+        if not counterpart.direction:
+            return Decision("INSUFFICIENT_DATA", "Counterpart direction unverified")
+        if counterpart.direction != original.direction:
+            return Decision("STATUS_MISMATCH", "Counterpart direction conflicts")
+        if counterpart.status == "UNKNOWN":
+            return Decision("INSUFFICIENT_DATA", "Counterpart status unverified")
+        if original.status == "PAID" and counterpart.status != "PAID":
+            return Decision("STATUS_MISMATCH", "Origin paid but counterpart status differs")
     if original.status in {"CANCELLED", "RETURNED"}:
-        return Decision("PENDING", "Cancelled or returned remittance requires lifecycle review")
+        return Decision("PENDING", "Cancelled or returned: review lifecycle before payment check")
     if original.status != "PAID":
-        return Decision("PENDING", "Remittance is not marked paid at origin")
-    if counterpart.status != "PAID":
-        return Decision("STATUS_MISMATCH", "Origin paid; destination has another status")
+        return Decision("PENDING", "Origin remittance not marked paid")
     if not destination_payments:
         return Decision("PAYMENT_MISSING", "Paid remittance has no payment evidence in destination")
     if len(destination_payments) > 1:
@@ -72,7 +73,7 @@ def decide(
         return Decision("INSUFFICIENT_DATA", "Source amount or currency is unverified")
     # We do not equate source principal to destination payout without a verified
     # contract/mapping for destination expected amount.
-    return Decision("MATCHED", "Operational existence/status/payment evidence matched; amount NOT validated")
+    return Decision("MATCHED", "Origin status and destination payment evidence matched; no mirrored remittance required; amount NOT validated")
 
 
 def ambiguity_by_code(rows: list[OperationEvidence]) -> bool:

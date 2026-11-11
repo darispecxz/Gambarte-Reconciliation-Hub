@@ -59,3 +59,8 @@ Se añadieron seis tablas a la BD **exclusiva de conciliación**: `sync_cursors`
 ## Pendientes para producción
 
 Validar esquema, monedas, direcciones, identidad de depósitos y fechas de creación/modificación, cobertura completa, operaciones parciales y transferencias, concurrencia de workers, observabilidad, RBAC y auditoría administrativa. El reporte financiero y validación contable pertenecen a etapas posteriores.
+
+## Corrección durante revisión CI
+- FastAPI se distribuye como paquete `app` explícito mediante setuptools; `migrations` no se empaqueta como aplicación. Corrige el error inicial de instalación editable.
+- Una remesa de origen **no necesita una segunda fila remesa en destino**. El pago en destino constituye evidencia operativa, de acuerdo con los patrones observados en el POC. Sin pago, se genera `PAYMENT_MISSING`; no se genera `MISSING_DESTINATION` por ausencia del espejo.
+- La dirección de remesas registradas en Bolivia no se adivina: definir `BOLIVIA_TO_CHILE_OPERATION_TYPES` únicamente después de validar tipos y destinos reales.
