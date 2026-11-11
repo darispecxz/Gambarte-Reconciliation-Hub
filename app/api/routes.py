@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_session
+from app.domain.operation_types import classify_operation
 from app.infrastructure.models import (
     Discrepancy, Payment, ReconciliationMatch, ReconciliationRun,
     Remittance, RemittanceEvent, SourceRecord, SourceVersion, SyncCursor, SyncRun,
@@ -76,7 +77,9 @@ def list_remittances(
     return [
         {
             "id": r.id, "source": r.source, "code": r.code,
-            "operation_type": r.operation_type, "direction": r.direction,
+            "operation_type": r.operation_type,
+            "modality": classify_operation(r.source, "remittance", r.operation_type),
+            "direction": r.direction,
             "status": r.status, "amount": str(r.amount) if r.amount is not None else None,
             "currency": r.currency, "occurred_at": r.occurred_at,
             "source_record_id": r.source_record_id,
@@ -92,7 +95,9 @@ def get_remittance(remittance_id: int, db: Session = Depends(get_session)):
         raise HTTPException(404, "Remittance not found")
     return {
         "id": r.id, "source": r.source, "code": r.code,
-        "operation_type": r.operation_type, "direction": r.direction,
+        "operation_type": r.operation_type,
+        "modality": classify_operation(r.source, "remittance", r.operation_type),
+        "direction": r.direction,
         "status": r.status, "amount": str(r.amount) if r.amount is not None else None,
         "currency": r.currency, "occurred_at": r.occurred_at,
         "source_record_id": r.source_record_id,
@@ -135,6 +140,7 @@ def list_payments(
         {
             "id": p.id, "source": p.source, "code": p.code,
             "operation_type": p.operation_type,
+            "modality": classify_operation(p.source, "payment", p.operation_type),
             "amount": str(p.amount) if p.amount is not None else None,
             "currency": p.currency, "occurred_at": p.occurred_at,
             "source_record_id": p.source_record_id,

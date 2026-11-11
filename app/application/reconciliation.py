@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.domain.matching import Decision, OperationEvidence, PaymentEvidence, decide
+from app.domain.operation_types import classify_operation
 from app.infrastructure.models import (
     Discrepancy, Payment, ReconciliationMatch, ReconciliationRun, Remittance,
     SyncCursor, SyncRun, now,
@@ -151,6 +152,12 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                 result=decision.result, reason=decision.reason,
                 evidence={
                     "source_record_id": rem.source_record_id,
+                    "origin_modality": classify_operation(rem.source, "remittance",
+                                                          rem.operation_type),
+                    "destination_payment_modalities": [
+                        classify_operation(destination, "payment", p.operation_type)
+                        for p in payment_index.get((destination, rem.code), [])
+                    ],
                     "candidate_ids": [c.id for c in candidates],
                     "destination": destination,
                     "cutoff_at": run.cutoff_at.isoformat() if run.cutoff_at else None,

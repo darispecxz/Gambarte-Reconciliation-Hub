@@ -77,3 +77,15 @@ operaciones documentadas son defaults de allowlist, NO certificación
 de disponibilidad productiva.
 
 Próxima fase: `docs/ACCOUNTING_RECONCILIATION_ROADMAP.md`.
+
+## Identificación de modalidades en API y auditoría
+
+`modality` se deriva de `source`, `dataset` y `operation_type`,
+sin perder el ID original. Bolivia remesa 4 LEGACY_REMITTANCE,
+16 INTERNATIONAL_GIRO; Bolivia pago 4 CASH_WINDOW, 7 BANK_DEPOSIT.
+Chile remesa 3 REMITTANCE, 5/6 BANK_DEPOSIT y 8 BANK_LOAN.
+En Chile pagos sólo se publica LEGACY_TYPE_N, porque el POC no
+define inequívocamente su modalidad de entrega. Los campos originales
+`payment_method_id` y `payment_type_id` se preservan en el payload
+fuente para análisis posterior. No confundir estas modalidades con la
+naturaleza contable de cada operación.

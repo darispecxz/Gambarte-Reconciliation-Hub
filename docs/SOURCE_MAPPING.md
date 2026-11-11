@@ -1,23 +1,23 @@
 # Mapeo de fuentes: contrato provisional
 
-Los sistemas originales consultados corresponden a una versión histórica de PHP. El código del ETL **no debe habilitarse hasta revisar esquemas reales y mapeos**.
+Los contratos de esquema, estados y tipos fueron contrastados con consultas READ ONLY, el POC y PHP históricos. **No se ha aprobado todavía la activación del ETL ni la unicidad histórica de claves.**
 
 | Fuente | Objeto | Atributos proyectados | Estado |
 |---|---|---|---|
-| Bolivia | remesa | id_remesa, codigo, estado, monto, mon_rec, id_operacion, fechas | Por verificar |
-| Bolivia | pago | id_pago, codigo, monto, mon_rec, id_operacion, fec_crea_pago | Por verificar |
-| Chile | tmp_reporte_remesa | id_remesa, codigo, estado, envio, moneda, id_operacion, abr_ori, abr_des, fechas | Fuente consolidada confirmada conceptualmente |
-| Chile | pago | id_pago, codigo, monto, mon_rec, id_operacion, fec_crea_pago | Por verificar |
+| Bolivia | remesa | id_remesa, codigo, estado, monto, mon_rec, id_operacion, fechas | Columnas verificadas |
+| Bolivia | pago | id_pago, codigo, monto, mon_rec, id_operacion, id_forma_pago, id_tipo_pago, fec_crea_pago | Columnas verificadas |
+| Chile | tmp_reporte_remesa | id_remesa, codigo, estado, envio, moneda, id_operacion, abr_ori, abr_des, fechas | Columnas verificadas; identidad compuesta pendiente |
+| Chile | pago | id_pago, codigo, monto, mon_rec, id_operacion, id_forma_pago, id_tipo_pago, fec_crea_pago | Columnas verificadas |
 
 ## Regla de Chile
 `tmp_reporte_remesa` centraliza información de `remesa` y `deposito_bancario` y se debe utilizar como fuente principal del ETL. No sustituirla por lectura exclusiva de `remesa`.
 
 ## Comprobaciones necesarias antes de activar ETL
 1. Verificar la unicidad de la combinación `(id_remesa, id_operacion)` dentro de la vista/tablas consolidadas, incluyendo depósitos bancarios.
-2. Confirmar tipos de operación Bolivia `(4,16)`, pagos `(4,7)`, Chile `(3,5,6,8)`. Son hipótesis del POC, no verdad garantizada.
-3. Confirmar si `estado=1` es realmente PAID para cada tipo de operación y en cada país, y documentar las transiciones.
-4. Verificar `abr_ori`/`abr_des` y direcciones reales para Bolivia; actualmente los registros Bolivia no informan dirección por defecto.
-5. Identificar código ISO asociado a `mon_rec` y `moneda`. Un entero (FK) no debe convertirse en código de moneda mediante supuestos.
+2. Tipos `(4,16)`, `(4,7)`, `(3,5,6,8)` confirmados en el POC y legado; **validar vigencia de cada subtipo e impacto de operaciones no bilaterales**.
+3. Estados definidos en el POC; verificar transiciones y casos reales de pagos tardíos.
+4. `abr_ori`/`abr_des` son agencias/localidades; nunca inferir dirección desde ellas.
+5. Catálogos de moneda por país verificados en lectura; conservar siempre el ID original como evidencia.
 6. Distinguir `monto`, `envio`, `total`, `total_cambio` y tipo de cambio. No comparar valores sin confirmar su misma función.
 7. Confirmar fechas, anulaciones, correcciones y pago tardío; validar que la ventana retrospectiva detecta estos cambios.
 8. Definir si `codigo` puede repetirse por tipo/dirección/año y si cambia por anulación.
@@ -28,8 +28,8 @@ Los sistemas originales consultados corresponden a una versión histórica de PH
 ## Enfoque de validación
 Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas con `SHOW CREATE TABLE`, índices y un conjunto pequeño de casos conocidos (envío, pago, devolución, depósito, anulación); no copiar datos privados a GitHub. La herramienta no modifica registros de Bolivia/Chile.
 
-## Configuración de dirección Bolivia
-`BOLIVIA_TO_CHILE_OPERATION_TYPES` es una lista de IDs separados por comas y **vacía por defecto**. Configurarla tras verificar el alcance de los tipos con casos reales y controlar giros a destinos distintos de Chile. Las remesas sin dirección verificada se clasifican como `INSUFFICIENT_DATA`.
+## Configuración de dirección
+`BOLIVIA_TO_CHILE_OPERATION_TYPES=4,16` y `CHILE_TO_BOLIVIA_OPERATION_TYPES=3,5,6,8` representan los grupos del POC. **No son autorización de ETL**; revisar giros a destinos fuera del circuito bilateral. Las remesas sin dirección aprobada se clasifican como `INSUFFICIENT_DATA`.
 
 ## Validaciones confirmadas (11-11-2026, consultas READ ONLY)
 
@@ -53,9 +53,9 @@ Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas co
   (estado 0 y 1), pagos Bolivia tipos 3/4/7, Chile remesa tipos 3/5 y
   pagos Chile tipo 3. Observar un tipo NO demuestra que sea exclusivo de
   remesas transfronterizas; **no habilitar automáticamente**.
-- No se ha confirmado la semántica de estados, la unicidad de código,
-  la combinación única en vista Chile ni el significado contractual
-  de los importes. Evitar etiquetar MATCHED como conciliación de montos.
+- El POC documenta los estados, pero siguen pendientes la unicidad histórica
+  de código, la combinación única de la vista Chile, transiciones extremas
+  y el significado contractual de importes. MATCHED no concilia montos.
 - Las abreviaturas literales ARG y GYP se conservan como aparecen en el
   catálogo de Chile, sin cambiarlas a ARS/PYG por suposición.
 
@@ -67,14 +67,14 @@ original. Direcciones se asignan exclusivamente por listas de tipos
 **aprobadas** y `SOURCE_MAPPING_VERIFIED=true`:
 
 ```dotenv
-BOLIVIA_TO_CHILE_OPERATION_TYPES=
-CHILE_TO_BOLIVIA_OPERATION_TYPES=
+BOLIVIA_TO_CHILE_OPERATION_TYPES=4,16
+CHILE_TO_BOLIVIA_OPERATION_TYPES=3,5,6,8
 SOURCE_MAPPING_VERIFIED=false
 ENABLE_SOURCE_ETL=false
 ```
 
-Estos valores deben seguir vacíos hasta analizar cada tipo de operación
-y confirmar estados, singularidad y cobertura. El motor ya cruza
+Los IDs de negocio están documentados, pero las dos barreras de seguridad
+permanecen desactivadas hasta validar singularidad y cobertura. El motor ya cruza
 `(país_destino, codigo)` con pagos y conserva IDs de evidencia. Un
 `PAYMENT_MISSING` solo debe informarse si la ventana del dataset
 **pagos del destino** cubre la fecha de la remesa.

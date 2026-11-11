@@ -217,3 +217,17 @@ def test_cutoff_only_later_payment_classified_pending_asof():
 def test_cutoff_unknown_payment_date_is_insufficient():
     assert decide(operation(), [], [payment()],
                   cutoff_at=datetime(2026, 10, 31)).result == "INSUFFICIENT_DATA"
+
+from app.domain.operation_types import classify_operation
+
+
+def test_poc_operation_modalities_and_unknown():
+    assert classify_operation("BOLIVIA", "remittance", 4) == "LEGACY_REMITTANCE"
+    assert classify_operation("BOLIVIA", "remittance", 16) == "INTERNATIONAL_GIRO"
+    assert classify_operation("BOLIVIA", "payment", 4) == "CASH_WINDOW"
+    assert classify_operation("BOLIVIA", "payment", 7) == "BANK_DEPOSIT"
+    assert classify_operation("CHILE", "remittance", 5) == "BANK_DEPOSIT"
+    assert classify_operation("CHILE", "remittance", 6) == "BANK_DEPOSIT"
+    assert classify_operation("CHILE", "remittance", 8) == "BANK_LOAN"
+    assert classify_operation("CHILE", "payment", 8) == "LEGACY_TYPE_8"
+    assert classify_operation("CHILE", "remittance", 999) == "UNKNOWN"

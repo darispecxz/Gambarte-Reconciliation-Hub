@@ -23,11 +23,12 @@ API requiere cabecera `X-API-Key` excepto `/health`. No exponer directamente a i
 - `GET /api/v1/sync/status`: últimas ejecuciones.
 - `GET /api/v1/sync/cursors`: última cobertura, avance y si existe una ventana inacabada.
 - `POST /api/v1/reconciliations`: encola ejecución, devuelve ID.
+- `POST /api/v1/reconciliations?cutoff_at=2026-10-31T23:59:59`: corte histórico conservador con fecha local; no se reconstruyen estados históricos del legado.
 - `GET /api/v1/reconciliations/{id}/matches`: evidencias por operación.
 - Un proceso de ingesta fallido deja el cursor en progreso; el siguiente intenta continuar desde la última página confirmada.
 
 ## Preproducción
-- Validar con pruebas sintéticas la migración 0001→0002 y reinstalación desde cero.
+- Validar con pruebas sintéticas la cadena de migraciones 0001→0002→0003 y reinstalación desde cero.
 - Preferir cuentas SQL SELECT-only en Bolivia y Chile, nunca root. Si el hosting no permite crear otro usuario, se habilitó una defensa adicional por sesión: cada consulta de origen se ejecuta dentro de `START TRANSACTION READ ONLY` y siempre se hace `ROLLBACK`; esto **no reemplaza** permisos SELECT a nivel servidor ni impide que las credenciales reutilizadas se empleen desde otro programa.
 - Proteger secretos mediante variables/secret manager del servidor, y no comitear `.env`.
 - Mantener DB central en red interna Docker; volumen persistente, respaldos cifrados, pruebas de restauración.

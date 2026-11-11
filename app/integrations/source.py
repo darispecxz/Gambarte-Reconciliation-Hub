@@ -61,6 +61,7 @@ SQL = {
     ("BOLIVIA", "payment"): """
         SELECT p.id_pago AS source_pk, p.codigo AS code, p.monto AS amount,
                p.mon_rec AS currency_id, p.id_operacion AS operation_type,
+               p.id_forma_pago AS payment_method_id, p.id_tipo_pago AS payment_type_id,
                p.fec_crea_pago AS occurred_at
         FROM pago p
         WHERE p.id_operacion IN (4,7) AND p.fec_crea_pago >= :cutoff
@@ -71,6 +72,7 @@ SQL = {
     ("CHILE", "payment"): """
         SELECT p.id_pago AS source_pk, p.codigo AS code, p.monto AS amount,
                p.mon_rec AS currency_id, p.id_operacion AS operation_type,
+               p.id_forma_pago AS payment_method_id, p.id_tipo_pago AS payment_type_id,
                p.fec_crea_pago AS occurred_at
         FROM pago p
         WHERE p.id_operacion IN (3,5,6,8) AND p.fec_crea_pago >= :cutoff

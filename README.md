@@ -45,7 +45,7 @@ En `ENVIRONMENT=development` la documentación FastAPI está disponible localmen
 | GET | /api/v1/remittances/{id} | Detalle |
 | GET | /api/v1/remittances/{id}/events | Cambios observados |
 | GET | /api/v1/payments | Evidencia de pagos |
-| POST | /api/v1/reconciliations | Solicitar trabajo asíncrono |
+| POST | /api/v1/reconciliations | Solicitar trabajo asíncrono; `?cutoff_at=YYYY-MM-DDTHH:MM:SS` opcional |
 | GET | /api/v1/reconciliations | Ejecuciones |
 | GET | /api/v1/reconciliations/{id} | Estado/resultado |
 | GET | /api/v1/reconciliations/{id}/matches | Evidencias y decisiones |
@@ -55,6 +55,8 @@ En `ENVIRONMENT=development` la documentación FastAPI está disponible localmen
 
 - [Arquitectura y límites](docs/ARCHITECTURE.md)
 - [Mapeo de fuentes y reglas pendientes](docs/SOURCE_MAPPING.md)
+- [Contrato de conciliación operativa](docs/OPERATIONAL_RECONCILIATION.md)
+- [Siguiente etapa: conciliación contable](docs/ACCOUNTING_RECONCILIATION_ROADMAP.md)
 - [Etapa B: implementación y decisiones](docs/PHASE_B_IMPLEMENTATION.md)
 - [Bitácora de desarrollo](docs/DEVELOPMENT_LOG.md)
 - [Operación y seguridad](docs/OPERATIONS.md)
