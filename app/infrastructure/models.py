@@ -53,6 +53,7 @@ class ReconciliationRun(Base):
     __tablename__ = "reconciliation_runs"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
+    cutoff_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)

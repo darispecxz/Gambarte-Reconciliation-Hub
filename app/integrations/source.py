@@ -135,19 +135,19 @@ def read_only_transaction(engine: Engine) -> Iterator[Connection]:
             connection.rollback()
 
 
-# Status codes are provisional. UNKNOWN intentionally prevents unsupported
-# "paid" interpretations until code tables are verified for each operation.
-PROVISIONAL_STATUS = {
+# Extracted from POC Reconciliation.Domain/RemittanceStatus.cs; these are
+# current observed labels, not proof of cross-system delivery/settlement.
+STATUS_BY_SOURCE = {
     "BOLIVIA": {0: "PENDING", 1: "PAID", 2: "RETURNED", 5: "CANCELLED"},
-    "CHILE": {0: "PENDING", 1: "PAID", 2: "RETURNED", 3: "RETURNED",
-              4: "CHANGED", 5: "CANCELLED", 6: "TO_RETURN", 7: "PROCESSING",
-              8: "SAVINGS"},
+    "CHILE": {0: "PENDING", 1: "PAID", 2: "RETURNED", 3: "RETURNED_SC",
+              4: "CHANGED", 5: "CANCELLED", 6: "TO_RETURN",
+              7: "PROCESSING", 8: "SAVINGS"},
 }
 
 
 def map_status(source: str, value: object) -> str:
     try:
-        return PROVISIONAL_STATUS[source].get(int(value), "UNKNOWN")
+        return STATUS_BY_SOURCE[source].get(int(value), "UNKNOWN")
     except (ValueError, TypeError, KeyError):
         return "UNKNOWN"
 
@@ -233,15 +233,17 @@ def normalize(source: str, dataset: str, raw: dict) -> Extracted:
         ):
             direction = "CL_TO_BO"
     code = str(raw["code"]).strip() if raw.get("code") is not None else ""
-    if not code:
+    if not code or code == "0":
         raise ValueError("Source record without a reconciliation code")
     return Extracted(
         source=source,
         dataset=dataset,
         source_id=f"{operation}:{pk}",
         code=code,
-        status=map_status(source, raw.get("status_code")) if dataset == "remittance"
-               else "RECORDED",
+        status=("CANCELLED" if source == "CHILE" and dataset == "remittance"
+                and code.lstrip("-").isdigit() and int(code) < 0
+                else map_status(source, raw.get("status_code")))
+               if dataset == "remittance" else "RECORDED",
         amount=decimal_amount(raw["amount"]) if raw.get("amount") is not None else None,
         currency=currency,
         raw=raw,
@@ -265,8 +267,13 @@ def fetch_page(source: str, dataset: str, cutoff: datetime, last_id: int = 0,
             rows = connection.execute(
                 text(sql),
                 {"cutoff": cutoff, "last_id": last_id,
-                 "last_op": last_operation_id, "lim": limit},
+                 "last_op": last_operation_id, "lim": limit + 1},
             ).mappings().all()
-            return [normalize(source, dataset, dict(row)) for row in rows]
+            # A repeated composite cursor (especially in the Chile consolidated
+            # view) would silently skip records on the following page.
+            keys = [(int(row["source_pk"]), int(row["operation_type"])) for row in rows]
+            if len(keys) != len(set(keys)):
+                raise RuntimeError(f"{source}/{dataset}: non-unique source cursor detected")
+            return [normalize(source, dataset, dict(row)) for row in rows[:limit]]
     finally:
         engine.dispose()

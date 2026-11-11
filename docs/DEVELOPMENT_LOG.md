@@ -56,3 +56,14 @@
   evalúa la sincronización del dataset destino `payment`, no `remittance`.
 - ETL sigue deshabilitado por defecto hasta completar estados, unicidad,
   semántica de tipos y validación con casos controlados.
+
+## 2026-11-11 — Revisión POC completo y archivos ZIP
+
+- Consultados POC C# y los ZIP Bolivia/Chile. Contratos de remesa/pago,
+  estados (incluido Chile 7 PROCESSING) y fallback HTTP entre sistemas.
+- Actualización estado/pago no es transacción distribuida; detectar
+  `STATUS_MISMATCH` sin intentar reparar bases fuente.
+- Incorporado corte histórico conservador sin inventar snapshots pasados.
+- Agregada migración `0003_operational_cutoff`, tablas fuente sin cambios.
+- Roadmap contable separado para `co_asientos` y saldos; ninguna
+  contabilización ni actualización de fuentes en etapa operativa.

@@ -62,7 +62,7 @@ def _operation(row: Remittance) -> OperationEvidence:
 def _payment(row: Payment) -> PaymentEvidence:
     return PaymentEvidence(
         id=row.id, source=row.source, code=row.code, operation_type=row.operation_type,
-        amount=row.amount, currency=row.currency,
+        amount=row.amount, currency=row.currency, occurred_at=row.occurred_at,
     )
 
 
@@ -94,6 +94,11 @@ def execute(session: Session, run: ReconciliationRun) -> int:
         for rem in remittances:
             if rem.id in processed:
                 continue
+            # Historical run excludes operations that did not yet exist.
+            if run.cutoff_at is not None and (
+                rem.occurred_at is None or rem.occurred_at > run.cutoff_at
+            ):
+                continue
             evidence = _operation(rem)
             if rem.direction in ("BO_TO_CL", "CL_TO_BO"):
                 origin = "BOLIVIA" if rem.direction == "BO_TO_CL" else "CHILE"
@@ -116,7 +121,8 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                     else:
                         # Destination may have only a payment, not a mirrored remesa.
                         decision = decide(evidence, [_operation(c) for c in candidates],
-                                          payment_index.get((destination, rem.code), []))
+                                          payment_index.get((destination, rem.code), []),
+                                          cutoff_at=run.cutoff_at)
             else:
                 candidates = []
                 destination = "CHILE" if rem.source == "BOLIVIA" else "BOLIVIA"
@@ -134,6 +140,11 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                 if decision.result in {"MISSING_ORIGIN", "MISSING_DESTINATION", "PAYMENT_MISSING"}:
                     decision = Decision("INSUFFICIENT_DATA",
                                         "Historical coverage cannot prove absence")
+            if run.cutoff_at is not None and decision.result == "PAYMENT_MISSING":
+                # The last successful rolling sync is not a historical snapshot.
+                # No matching payment by cutoff cannot be certified absent.
+                decision = Decision("INSUFFICIENT_DATA",
+                                    "No full payment history verified at requested cutoff")
             counterpart_id = candidates[0].id if len(candidates) == 1 else None
             session.add(ReconciliationMatch(
                 run_id=run.id, remittance_id=rem.id, counterpart_id=counterpart_id,
@@ -142,8 +153,17 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                     "source_record_id": rem.source_record_id,
                     "candidate_ids": [c.id for c in candidates],
                     "destination": destination,
+                    "cutoff_at": run.cutoff_at.isoformat() if run.cutoff_at else None,
                     "matched_payment_ids": [p.id for p in
-                                            payment_index.get((destination, rem.code), [])],
+                                            payment_index.get((destination, rem.code), [])
+                                            if run.cutoff_at is None or
+                                            (p.occurred_at is not None and
+                                             p.occurred_at <= run.cutoff_at)],
+                    "payments_after_cutoff_ids": [p.id for p in
+                                                   payment_index.get((destination, rem.code), [])
+                                                   if run.cutoff_at is not None and
+                                                   p.occurred_at is not None and
+                                                   p.occurred_at > run.cutoff_at],
                     "verified_amount": decision.verified_amount,
                     "source_sync_finished_at": coverage[(rem.source, "remittance")]["finished_at"],
                     "destination_remittance_sync_finished_at": coverage[
@@ -156,7 +176,7 @@ def execute(session: Session, run: ReconciliationRun) -> int:
             processed.add(rem.id)
             if counterpart_id is not None:
                 processed.add(counterpart_id)
-            if decision.result not in {"MATCHED", "PENDING"}:
+            if decision.result not in {"MATCHED", "PENDING", "PENDING_AS_OF", "CLOSED"}:
                 session.add(Discrepancy(
                     run_id=run.id, code=rem.code,
                     category=decision.result, description=decision.reason,
@@ -166,7 +186,7 @@ def execute(session: Session, run: ReconciliationRun) -> int:
         run.status = "COMPLETED"
         run.finished_at = now()
         run.message = (
-            f"{count} findings; operational presence only, "
+            f"{count} findings; operational presence only (cutoff={run.cutoff_at}); "
             "payment amounts and financial settlements are NOT certified"
         )
         session.commit()

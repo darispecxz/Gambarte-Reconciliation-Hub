@@ -78,3 +78,21 @@ y confirmar estados, singularidad y cobertura. El motor ya cruza
 `(país_destino, codigo)` con pagos y conserva IDs de evidencia. Un
 `PAYMENT_MISSING` solo debe informarse si la ventana del dataset
 **pagos del destino** cubre la fecha de la remesa.
+
+## Contrato POC y legado PHP (revisión ampliada)
+
+Se confirma el alcance operativo: BO remesa 4 (histórica, hasta 2024)
+y 16 (giro internacional actual), BO pago 4 (ventanilla) y 7
+(depósito); CL remesa y pago tipos 3,5,6,8 según el POC. La vista
+consolidada CL asocia 3 con `remesa`, 5/6 con `deposito_bancario`
+y 8 con `prestamo_bancario` en el PHP. Esto NO confirma que todos
+los subtipos se comporten de forma idéntica. El estado 7 de Chile
+es `PROCESSING`; el estado 3 es `RETURNED_SC`. Código negativo
+en Chile se considera anulado de acuerdo con el POC.
+
+Las listas permitidas incluyen los valores POC, pero **no habilitan
+el ETL por sí solas**: `ENABLE_SOURCE_ETL=false` y
+`SOURCE_MAPPING_VERIFIED=false` siguen siendo las barreras.
+Para reglas de decisión y futuras cuentas ver los archivos
+`OPERATIONAL_RECONCILIATION.md` y
+`ACCOUNTING_RECONCILIATION_ROADMAP.md`.

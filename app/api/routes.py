@@ -1,5 +1,6 @@
 """Versioned REST API for operational reconciliation; no source database access."""
 import hmac
+from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -143,11 +144,17 @@ def list_payments(
 
 
 @router.post("/reconciliations", status_code=202, dependencies=[Depends(auth)])
-def create_reconciliation(db: Session = Depends(get_session)):
-    run = ReconciliationRun(status="PENDING")
+def create_reconciliation(
+    cutoff_at: datetime | None = Query(default=None),
+    db: Session = Depends(get_session),
+):
+    # Legacy dates are naive local source timestamps, not UTC timestamps.
+    if cutoff_at is not None and cutoff_at.tzinfo is not None:
+        raise HTTPException(status_code=422, detail="cutoff_at must be timezone-naive source-local datetime")
+    run = ReconciliationRun(status="PENDING", cutoff_at=cutoff_at)
     db.add(run)
     db.commit()
-    return {"id": run.id, "status": run.status}
+    return {"id": run.id, "status": run.status, "cutoff_at": run.cutoff_at}
 
 
 @router.get("/reconciliations", dependencies=[Depends(auth)])
@@ -158,7 +165,8 @@ def list_reconciliations(
         ReconciliationRun.id.desc()).limit(limit)).all()
     return [
         {
-            "id": r.id, "status": r.status, "created_at": r.created_at,
+            "id": r.id, "status": r.status, "cutoff_at": r.cutoff_at,
+            "created_at": r.created_at,
             "finished_at": r.finished_at, "message": r.message,
         }
         for r in rows
@@ -171,7 +179,8 @@ def get_reconciliation(run_id: int, db: Session = Depends(get_session)):
     if not run:
         raise HTTPException(404, "Reconciliation not found")
     return {
-        "id": run.id, "status": run.status, "message": run.message,
+        "id": run.id, "status": run.status, "cutoff_at": run.cutoff_at,
+        "message": run.message,
         "created_at": run.created_at, "finished_at": run.finished_at,
     }
 

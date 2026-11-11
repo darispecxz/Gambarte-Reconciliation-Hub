@@ -167,3 +167,53 @@ def test_reject_malformed_operation_allowlist():
         approved_operation_types("3,foo")
     assert approved_operation_types(" 3 , 5, 3 ") == {3, 5}
 
+
+from datetime import datetime
+from app.integrations.source import map_status
+
+
+def test_all_poc_status_codes():
+    assert [map_status("BOLIVIA", x) for x in (0, 1, 2, 5)] == [
+        "PENDING", "PAID", "RETURNED", "CANCELLED"
+    ]
+    assert [map_status("CHILE", x) for x in range(9)] == [
+        "PENDING", "PAID", "RETURNED", "RETURNED_SC", "CHANGED",
+        "CANCELLED", "TO_RETURN", "PROCESSING", "SAVINGS",
+    ]
+
+
+def test_chile_negative_code_overrides_status_to_cancelled():
+    row = normalize("CHILE", "remittance", {
+        "source_pk": 11, "operation_type": 3, "code": -123,
+        "status_code": 1, "amount": Decimal("100"), "currency_id": "BOB",
+    })
+    assert row.code == "-123"
+    assert row.status == "CANCELLED"
+
+
+def test_pending_source_with_destination_payment_is_status_mismatch():
+    assert decide(operation(status="PENDING"), [], [payment()]).result == "STATUS_MISMATCH"
+    assert decide(operation(status="PROCESSING"), [], [payment()]).result == "STATUS_MISMATCH"
+
+
+def test_cancelled_and_returned_are_not_incorrectly_matched():
+    assert decide(operation(status="CANCELLED"), [], []).result == "CLOSED"
+    assert decide(operation(status="RETURNED_SC"), [], [payment()]).result == "MANUAL_REVIEW"
+
+
+def test_cutoff_only_later_payment_classified_pending_asof():
+    dated = PaymentEvidence(
+        id=99, source="BOLIVIA", code="CL123", operation_type=4,
+        amount=Decimal("100"), currency="BOB",
+        occurred_at=datetime(2026, 11, 4, 12, 0),
+    )
+    result = decide(operation(status="PAID"), [], [dated],
+                    cutoff_at=datetime(2026, 10, 31, 23, 59, 59))
+    assert result.result == "PENDING_AS_OF"
+    assert decide(operation(status="PAID"), [], [dated],
+                  cutoff_at=datetime(2026, 11, 5)).result == "MATCHED"
+
+
+def test_cutoff_unknown_payment_date_is_insufficient():
+    assert decide(operation(), [], [payment()],
+                  cutoff_at=datetime(2026, 10, 31)).result == "INSUFFICIENT_DATA"

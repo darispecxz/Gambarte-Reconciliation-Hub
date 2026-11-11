@@ -67,3 +67,15 @@ Validar esquema, monedas, direcciones, identidad de depósitos y fechas de creac
 
 ## Resultado CI comprobado (2026-11-11)
 GitHub Actions (rama de esta etapa): **24 pruebas aprobadas**, instalación editable completada y migraciones `0001_initial`→`0002_operational` aplicadas sobre MariaDB 11.4 efímera. Esto comprueba instalación y pruebas sintéticas, **no** conectividad ni datos reales de CGR.
+
+## 2026-11-11 — Actualización del contrato operativo a partir del POC
+
+Se añadieron reglas de estados completos Bolivia/Chile, cancelación
+por código negativo en CL, cobertura de pagos por `codigo`, clasificación
+de inconsistencias remesa/pago, ventana de fecha de corte y evidencia
+de pagos posteriores. Migración `0003_operational_cutoff` agrega
+`reconciliation_runs.cutoff_at` nullable. Se conserva la separación
+de países y monedas sin validar importes ni asientos.
+
+Ver `docs/OPERATIONAL_RECONCILIATION.md` (alcance y limitaciones)
+y `docs/ACCOUNTING_RECONCILIATION_ROADMAP.md` (siguiente etapa).
