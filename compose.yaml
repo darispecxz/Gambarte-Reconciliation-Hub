@@ -1,0 +1,34 @@
+x-app: &app
+  build: .
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    mariadb:
+      condition: service_healthy
+services:
+  api:
+    <<: *app
+    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+    ports: ["127.0.0.1:8000:8000"]
+  etl:
+    <<: *app
+    command: ["python","-m","app.workers.sync"]
+  reconciler:
+    <<: *app
+    command: ["python","-m","app.workers.reconcile"]
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes: ["mariadb_data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD","healthcheck.sh","--connect","--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+volumes:
+  mariadb_data:
