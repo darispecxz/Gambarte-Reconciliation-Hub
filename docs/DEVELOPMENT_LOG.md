@@ -30,3 +30,8 @@
 - Cobertura histórica completa y semántica de estados/importes.
 - Leases/locking al escalar workers.
 - Integración de caja, contabilidad y liquidaciones financieras en fases siguientes.
+
+## Resultado de integración CI
+- Corregido paquete setuptools: solo `app` se publica; los directorios de migraciones y pruebas no se detectan como paquetes de distribución.
+- Ajustado matching para permitir remesa de origen + pago en destino aunque no exista remesa espejo en el destino.
+- GitHub Actions: **24 passed**, migraciones ejecutadas sobre MariaDB 11.4 temporal el 2026-11-11. No hubo integración real con DB CGR.

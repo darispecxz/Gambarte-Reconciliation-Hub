@@ -29,7 +29,7 @@ Se añadieron seis tablas a la BD **exclusiva de conciliación**: `sync_cursors`
 
 ## Reglas de resultado
 
-- `MATCHED`: existencia de contraparte, estados PAID y evidencia de al menos un pago, con dirección confirmada. **No significa que los importes hayan sido comprobados**.
+- `MATCHED`: remesa de origen con estado PAID, dirección verificada y evidencia de pago en destino; puede no existir una remesa espejo en el país pagador. **No certifica importes ni obligaciones**.
 - `PAYMENT_MISSING`: pago ausente de una operación PAID cubierta por sincronización.
 - `MISSING_ORIGIN` / `MISSING_DESTINATION`: operación no encontrada en ventana respaldada por sincronización.
 - `STATUS_MISMATCH`: estados incompatibles o dirección contradictoria.
@@ -64,3 +64,6 @@ Validar esquema, monedas, direcciones, identidad de depósitos y fechas de creac
 - FastAPI se distribuye como paquete `app` explícito mediante setuptools; `migrations` no se empaqueta como aplicación. Corrige el error inicial de instalación editable.
 - Una remesa de origen **no necesita una segunda fila remesa en destino**. El pago en destino constituye evidencia operativa, de acuerdo con los patrones observados en el POC. Sin pago, se genera `PAYMENT_MISSING`; no se genera `MISSING_DESTINATION` por ausencia del espejo.
 - La dirección de remesas registradas en Bolivia no se adivina: definir `BOLIVIA_TO_CHILE_OPERATION_TYPES` únicamente después de validar tipos y destinos reales.
+
+## Resultado CI comprobado (2026-11-11)
+GitHub Actions (rama de esta etapa): **24 pruebas aprobadas**, instalación editable completada y migraciones `0001_initial`→`0002_operational` aplicadas sobre MariaDB 11.4 efímera. Esto comprueba instalación y pruebas sintéticas, **no** conectividad ni datos reales de CGR.

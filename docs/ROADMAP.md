@@ -7,7 +7,7 @@
 - [x] Eventos observados y resultados individuales por ejecución.
 - [x] API de búsqueda de remesas, pagos, eventos y coincidencias.
 - [x] Validación de frescura de sincronización y bloqueo de fuentes fallidas.
-- [x] Pruebas de dominio + CI MariaDB temporal (código configurado; comprobar ejecución).
+- [x] Pruebas de dominio + CI MariaDB temporal (24 pruebas aprobadas el 2026-11-11).
 - [ ] Confirmar esquemas y campos reales de Chile/Bolivia, incluidas las columnas de `tmp_reporte_remesa` y `pago`.
 - [ ] Confirmar estados, direcciones y tipos de operación; mejorar correlación por más de `codigo`.
 - [ ] Comparación de importes con concepto, moneda de pago esperada y tolerancia verificada.
