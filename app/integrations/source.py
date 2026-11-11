@@ -3,11 +3,15 @@
 The Chile remittance source is tmp_reporte_remesa: it consolidates remesa
 and deposito_bancario. Only projected fields needed for reconciliation are read.
 """
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+import re
+from collections.abc import Iterator
+
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import Connection, Engine, URL
 from app.core.config import get_settings
 from app.domain.reconciliation import decimal_amount
 
@@ -98,6 +102,39 @@ def source_engine(source: str):
     )
 
 
+# These are fixed queries in source code; never accept SQL from HTTP/user input.
+# Guard against accidentally changing an extractor to a mutating statement.
+_UNSAFE_SELECT = re.compile(
+    r"\b(?:INTO\s+(?:OUTFILE|DUMPFILE)|FOR\s+UPDATE|LOCK\s+IN\s+SHARE\s+MODE)\b",
+    re.IGNORECASE,
+)
+
+
+def validate_read_query(sql: str) -> None:
+    """Allow one non-locking SELECT only, not arbitrary SQL or stored procedures."""
+    statement = sql.strip()
+    if (not re.match(r"^SELECT\b", statement, flags=re.IGNORECASE)
+            or ";" in statement or "--" in statement or "/*" in statement
+            or "#" in statement or _UNSAFE_SELECT.search(statement)):
+        raise ValueError("Source adapters accept only single, non-locking SELECT statements")
+
+
+@contextmanager
+def read_only_transaction(engine: Engine) -> Iterator[Connection]:
+    """Begin a DB-enforced READ ONLY transaction and ALWAYS roll back.
+
+    MariaDB rejects ordinary INSERT/UPDATE/DELETE/DDL within this transaction
+    even if the configured user has write privileges. It is not equivalent to
+    a database SELECT-only user: the same credential can open other sessions.
+    """
+    with engine.connect() as connection:
+        try:
+            connection.exec_driver_sql("START TRANSACTION READ ONLY")
+            yield connection
+        finally:
+            connection.rollback()
+
+
 # Status codes are provisional. UNKNOWN intentionally prevents unsupported
 # "paid" interpretations until code tables are verified for each operation.
 PROVISIONAL_STATUS = {
@@ -163,11 +200,14 @@ def fetch_page(source: str, dataset: str, cutoff: datetime, last_id: int = 0,
                last_operation_id: int = 0, limit: int = 500) -> list[Extracted]:
     if not 1 <= limit <= 2000:
         raise ValueError("Invalid page size")
+    # Validate source SQL before attempting to open a connection.
+    sql = SQL[(source, dataset)]
+    validate_read_query(sql)
     engine = source_engine(source)
     try:
-        with engine.connect() as connection:
+        with read_only_transaction(engine) as connection:
             rows = connection.execute(
-                text(SQL[(source, dataset)]),
+                text(sql),
                 {"cutoff": cutoff, "last_id": last_id,
                  "last_op": last_operation_id, "lim": limit},
             ).mappings().all()

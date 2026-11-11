@@ -28,7 +28,7 @@ API requiere cabecera `X-API-Key` excepto `/health`. No exponer directamente a i
 
 ## Preproducción
 - Validar con pruebas sintéticas la migración 0001→0002 y reinstalación desde cero.
-- Utilizar cuentas SQL SELECT-only en Bolivia y Chile, nunca root.
+- Preferir cuentas SQL SELECT-only en Bolivia y Chile, nunca root. Si el hosting no permite crear otro usuario, se habilitó una defensa adicional por sesión: cada consulta de origen se ejecuta dentro de `START TRANSACTION READ ONLY` y siempre se hace `ROLLBACK`; esto **no reemplaza** permisos SELECT a nivel servidor ni impide que las credenciales reutilizadas se empleen desde otro programa.
 - Proteger secretos mediante variables/secret manager del servidor, y no comitear `.env`.
 - Mantener DB central en red interna Docker; volumen persistente, respaldos cifrados, pruebas de restauración.
 - Ejecución en una sola instancia por worker hasta implementar leases.
