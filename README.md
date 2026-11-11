@@ -20,7 +20,7 @@ cp .env.example .env
 docker compose up -d --build
 docker compose ps
 curl http://127.0.0.1:8000/api/v1/health
-docker compose run --rm api pytest -q
+docker compose run --rm api python -m pytest -q
 ```
 
 El ETL **no** intenta consultar bases reales por defecto: `ENABLE_SOURCE_ETL=false` y `SOURCE_MAPPING_VERIFIED=false`. Ver [mapeos](docs/SOURCE_MAPPING.md) antes de habilitarlo.

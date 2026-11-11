@@ -35,3 +35,9 @@
 - Corregido paquete setuptools: solo `app` se publica; los directorios de migraciones y pruebas no se detectan como paquetes de distribución.
 - Ajustado matching para permitir remesa de origen + pago en destino aunque no exista remesa espejo en el destino.
 - GitHub Actions: **24 passed**, migraciones ejecutadas sobre MariaDB 11.4 temporal el 2026-11-11. No hubo integración real con DB CGR.
+
+## 2026-11-11 — Corrección de pruebas locales Docker
+- Diagnóstico de `ModuleNotFoundError: No module named app` durante `docker compose run --rm api pytest -q`.
+- Causa: `Dockerfile` instalaba `pyproject.toml` **antes** de copiar `app`, a diferencia de GitHub Actions (que instalaba el proyecto completo).
+- Corrección: copiar el código primero, instalar el paquete completo y definir PYTHONPATH, caché pytest escribible y comando `python -m pytest`.
+- Reforzada CI: construir la imagen Docker y ejecutar pytest dentro de ella con usuario no root, además de las pruebas de integración MariaDB fuera de Docker.

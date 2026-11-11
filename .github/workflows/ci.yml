@@ -45,4 +45,12 @@ jobs:
       - name: Check migration version
         run: alembic current
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
+      - name: Build production-like Docker image
+        run: docker build --tag gambarte-reconciliation-ci:latest .
+      - name: Run unit tests inside Docker image as non-root user
+        run: docker run --rm gambarte-reconciliation-ci:latest python -m pytest -q
+      - name: Verify image imports and user
+        run: |
+          docker run --rm gambarte-reconciliation-ci:latest python -c "import app.main; print('FastAPI imports: OK')"
+          docker run --rm gambarte-reconciliation-ci:latest id -u | grep -x 10001
