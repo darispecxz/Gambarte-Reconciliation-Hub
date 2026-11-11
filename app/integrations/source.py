@@ -250,7 +250,7 @@ def normalize(source: str, dataset: str, raw: dict) -> Extracted:
         raise ValueError("Source record without a reconciliation code")
     chile_remittance = source == "CHILE" and dataset == "remittance"
     dest = int(raw["cursor_destination"]) if chile_remittance else None
-    if chile_remittance and (operation is None or not re.fullmatch(r"-?\\d+", code)):
+    if chile_remittance and (operation is None or not re.fullmatch(r"-?\d+", code)):
         raise ValueError("Chile remittance requires numeric operation and codigo")
     return Extracted(
         source=source,
