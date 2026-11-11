@@ -12,6 +12,12 @@ docker compose run --rm api python -m pytest -q
 
 El servicio `migrate` aplica `alembic upgrade head` automáticamente antes de iniciar `api`, `etl` y `reconciler`.
 
+**Migración 0004**: valida que no existan remesas Chile importadas con
+la identidad vieja `op:id_remesa`. Si existen, fallará intencionalmente:
+realizar copia de seguridad y plan de reindexación, sin borrar datos
+ni forzar la migración. Los campos de cursor Chile cambian a
+`op,codigo,id_destino`; reanudar una posición antigua no es seguro.
+
 El ETL no se habilita automáticamente: `ENABLE_SOURCE_ETL=false` y `SOURCE_MAPPING_VERIFIED=false`. Primero revisar `SOURCE_MAPPING.md`.
 
 ## Acceso
@@ -28,7 +34,7 @@ API requiere cabecera `X-API-Key` excepto `/health`. No exponer directamente a i
 - Un proceso de ingesta fallido deja el cursor en progreso; el siguiente intenta continuar desde la última página confirmada.
 
 ## Preproducción
-- Validar con pruebas sintéticas la cadena de migraciones 0001→0002→0003 y reinstalación desde cero.
+- Validar con pruebas sintéticas la cadena de migraciones 0001→0002→0003→0004 y reinstalación desde cero.
 - Preferir cuentas SQL SELECT-only en Bolivia y Chile, nunca root. Si el hosting no permite crear otro usuario, se habilitó una defensa adicional por sesión: cada consulta de origen se ejecuta dentro de `START TRANSACTION READ ONLY` y siempre se hace `ROLLBACK`; esto **no reemplaza** permisos SELECT a nivel servidor ni impide que las credenciales reutilizadas se empleen desde otro programa.
 - Proteger secretos mediante variables/secret manager del servidor, y no comitear `.env`.
 - Mantener DB central en red interna Docker; volumen persistente, respaldos cifrados, pruebas de restauración.

@@ -71,7 +71,7 @@ Nuestro motor **no reintenta ni escribe** en sistemas fuente: detecta
 
 `ENABLE_SOURCE_ETL=false` y `SOURCE_MAPPING_VERIFIED=false`
 por defecto. Antes de activar: validar que los 4 tipos de Chile, los
-IDs de origen, las claves `(id_remesa,id_operacion)` únicas de la vista,
+IDs de origen, la clave PRIMARY `(id_operacion,codigo,id_destino)` de la vista,
 las fechas y la cobertura de cambios cumplen el contrato. Las
 operaciones documentadas son defaults de allowlist, NO certificación
 de disponibilidad productiva.
@@ -89,3 +89,35 @@ define inequívocamente su modalidad de entrega. Los campos originales
 `payment_method_id` y `payment_type_id` se preservan en el payload
 fuente para análisis posterior. No confundir estas modalidades con la
 naturaleza contable de cada operación.
+
+## Paginación Chile: validación EXPLAIN de 2026-11-11
+
+La tabla `tmp_reporte_remesa` tiene PRIMARY `(id_operacion,codigo,id_destino)`,
+todos `int(11) NOT NULL`; `id_remesa` también int, pero **no**
+pertenece a esa clave. En el plan anterior (orden por id_remesa)
+el optimizador estimó 302,617 filas con `Using filesort`. En un
+EXPLAIN por `id_operacion=3` y orden PRIMARY estimó 151,308 y
+no mostró filesort. **Son estimaciones, no benchmarks reales**.
+
+El extractor usa keyset estricto:
+`id_operacion > cursor.op OR (id_operacion = cursor.op AND codigo >
+cursor.code) OR (id_operacion = cursor.op AND codigo = cursor.code AND
+id_destino > cursor.dest)`. Filtra además fechas de creación/
+modificación y `id_operacion IN (3,5,6,8)`.
+Nunca deduce dirección de `abr_ori`/`abr_des`.
+`source_id` de remesas Chile pasa a `op:codigo:id_destino`;
+`id_remesa` persiste como campo fuente de referencia.
+
+El esquema central migra de 0003 a 0004 añadiendo
+`sync_cursors.last_code` y `last_destination_id`.
+**Protección de migración**: si ya existen remesas Chile importadas
+bajo la identidad anterior, la migración falla y exige una
+transición supervisada (no duplica datos por accidente). El ETL
+se mantiene deshabilitado.
+
+Límites de sincronización: el keyset sobre PRIMARY evita saltar
+filas dentro de un conjunto estático, pero no garantiza una
+instantánea consistente entre páginas si la fuente cambia mientras
+se pagina. La ventana de solapamiento mitiga correcciones recientes;
+cambios antiguos fuera del solapamiento requieren backfill explícito.
+La comprobación de integridad histórica sigue pendiente.

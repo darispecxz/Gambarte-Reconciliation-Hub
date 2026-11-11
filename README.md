@@ -23,6 +23,11 @@ curl http://127.0.0.1:8000/api/v1/health
 docker compose run --rm api python -m pytest -q
 ```
 
+La migración 0004 adapta el cursor Chile al PRIMARY real
+`(id_operacion,codigo,id_destino)` y detiene la actualización si se
+detectan registros Chile con la identidad antigua. Consultar
+[conciliación operativa](docs/OPERATIONAL_RECONCILIATION.md).
+
 El ETL **no** intenta consultar bases reales por defecto: `ENABLE_SOURCE_ETL=false` y `SOURCE_MAPPING_VERIFIED=false`. Ver [mapeos](docs/SOURCE_MAPPING.md) antes de habilitarlo.
 
 ```bash

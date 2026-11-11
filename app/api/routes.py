@@ -51,7 +51,9 @@ def sync_cursors(db: Session = Depends(get_session)):
         {
             "source": r.source, "dataset": r.dataset, "in_progress": r.in_progress,
             "window_start": r.window_start, "last_source_id": r.last_source_id,
-            "last_operation_id": r.last_operation_id, "last_success_at": r.last_success_at,
+            "last_operation_id": r.last_operation_id,
+            "last_code": r.last_code, "last_destination_id": r.last_destination_id,
+            "last_success_at": r.last_success_at,
         }
         for r in rows
     ]

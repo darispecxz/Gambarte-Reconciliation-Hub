@@ -78,6 +78,8 @@ class SyncCursor(Base):
     scan_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_source_id: Mapped[int] = mapped_column(BigInteger, default=0)
     last_operation_id: Mapped[int] = mapped_column(Integer, default=0)
+    last_code: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_destination_id: Mapped[int] = mapped_column(Integer, default=0)
     in_progress: Mapped[bool] = mapped_column(Boolean, default=False)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

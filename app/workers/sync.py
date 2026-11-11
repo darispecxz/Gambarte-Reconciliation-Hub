@@ -44,6 +44,8 @@ def sync(source: str, dataset: str, page_size: int = 500) -> int:
             cursor.scan_started_at = started
             cursor.last_source_id = 0
             cursor.last_operation_id = 0
+            cursor.last_code = 0
+            cursor.last_destination_id = 0
             cursor.in_progress = True
         run = SyncRun(source=source, dataset=dataset, status="RUNNING", count=0)
         db.add(run)
@@ -53,11 +55,18 @@ def sync(source: str, dataset: str, page_size: int = 500) -> int:
         try:
             while True:
                 rows = fetch_page(source, dataset, cursor.window_start,
-                                  cursor.last_source_id, cursor.last_operation_id, page_size)
+                                  cursor.last_source_id, cursor.last_operation_id,
+                                  page_size, cursor.last_code,
+                                  cursor.last_destination_id)
                 for row in rows:
                     ingest(db, row)
                     cursor.last_source_id = row.source_pk
                     cursor.last_operation_id = row.operation_type or 0
+                    if (source, dataset) == ("CHILE", "remittance"):
+                        if row.cursor_code is None or row.cursor_destination is None:
+                            raise RuntimeError("Chile source keyset was not populated")
+                        cursor.last_code = row.cursor_code
+                        cursor.last_destination_id = row.cursor_destination
                     total += 1
                 run.count += len(rows)
                 db.commit()  # data and cursor progress commit atomically
@@ -67,6 +76,8 @@ def sync(source: str, dataset: str, page_size: int = 500) -> int:
             cursor.last_success_at = now()
             cursor.last_source_id = 0
             cursor.last_operation_id = 0
+            cursor.last_code = 0
+            cursor.last_destination_id = 0
             run.status = "COMPLETED"
             run.finished_at = now()
             db.commit()

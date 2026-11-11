@@ -30,10 +30,15 @@ class Extracted:
     direction: str | None = None
     occurred_at: datetime | None = None
     source_pk: int = 0
+    # Chile remittance uses its actual PRIMARY (id_operacion, codigo, id_destino).
+    # Other source datasets continue using (source_pk, operation_type).
+    cursor_code: int | None = None
+    cursor_destination: int | None = None
 
 
-# Cursor = (primary key, operation type). The second component makes Chile
-# consolidated rows disambiguatable, but uniqueness must be validated in DB.
+# Chile tmp_reporte_remesa PRIMARY is (id_operacion, codigo, id_destino).
+# Never page by (id_remesa, id_operacion) or use that as Chile source identity.
+# All other datasets retain their existing source_pk/id_operacion keyset.
 SQL = {
     ("BOLIVIA", "remittance"): """
         SELECT r.id_remesa AS source_pk, r.codigo AS code, r.estado AS status_code,
@@ -47,16 +52,22 @@ SQL = {
         ORDER BY r.id_remesa, r.id_operacion LIMIT :lim
     """,
     ("CHILE", "remittance"): """
-        SELECT r.id_remesa AS source_pk, r.codigo AS code, r.estado AS status_code,
-               r.envio AS amount, r.moneda AS currency_id, r.id_operacion AS operation_type,
+        SELECT r.id_remesa AS source_pk, r.codigo AS code,
+               r.id_destino AS cursor_destination,
+               r.estado AS status_code, r.envio AS amount,
+               r.moneda AS currency_id, r.id_operacion AS operation_type,
                r.fec_crea_remesa AS occurred_at, r.fec_mod_remesa AS updated_at,
                r.abr_ori AS origin_country, r.abr_des AS destination_country
         FROM tmp_reporte_remesa r
         WHERE r.id_operacion IN (3,5,6,8)
           AND (r.fec_crea_remesa >= :cutoff OR r.fec_mod_remesa >= :cutoff)
-          AND (r.id_remesa > :last_id OR
-               (r.id_remesa = :last_id AND r.id_operacion > :last_op))
-        ORDER BY r.id_remesa, r.id_operacion LIMIT :lim
+          AND (
+               r.id_operacion > :last_op
+               OR (r.id_operacion = :last_op AND r.codigo > :last_code)
+               OR (r.id_operacion = :last_op AND r.codigo = :last_code
+                   AND r.id_destino > :last_dest)
+          )
+        ORDER BY r.id_operacion, r.codigo, r.id_destino LIMIT :lim
     """,
     ("BOLIVIA", "payment"): """
         SELECT p.id_pago AS source_pk, p.codigo AS code, p.monto AS amount,
@@ -237,10 +248,15 @@ def normalize(source: str, dataset: str, raw: dict) -> Extracted:
     code = str(raw["code"]).strip() if raw.get("code") is not None else ""
     if not code or code == "0":
         raise ValueError("Source record without a reconciliation code")
+    chile_remittance = source == "CHILE" and dataset == "remittance"
+    dest = int(raw["cursor_destination"]) if chile_remittance else None
+    if chile_remittance and (operation is None or not re.fullmatch(r"-?\\d+", code)):
+        raise ValueError("Chile remittance requires numeric operation and codigo")
     return Extracted(
         source=source,
         dataset=dataset,
-        source_id=f"{operation}:{pk}",
+        source_id=(f"{operation}:{code}:{dest}" if chile_remittance
+                   else f"{operation}:{pk}"),
         code=code,
         status=("CANCELLED" if source == "CHILE" and dataset == "remittance"
                 and code.lstrip("-").isdigit() and int(code) < 0
@@ -253,11 +269,14 @@ def normalize(source: str, dataset: str, raw: dict) -> Extracted:
         direction=direction,
         occurred_at=raw.get("occurred_at"),
         source_pk=pk,
+        cursor_code=int(code) if chile_remittance else None,
+        cursor_destination=dest,
     )
 
 
 def fetch_page(source: str, dataset: str, cutoff: datetime, last_id: int = 0,
-               last_operation_id: int = 0, limit: int = 500) -> list[Extracted]:
+               last_operation_id: int = 0, limit: int = 500,
+               last_code: int = 0, last_destination: int = 0) -> list[Extracted]:
     if not 1 <= limit <= 2000:
         raise ValueError("Invalid page size")
     # Validate source SQL before attempting to open a connection.
@@ -269,13 +288,25 @@ def fetch_page(source: str, dataset: str, cutoff: datetime, last_id: int = 0,
             rows = connection.execute(
                 text(sql),
                 {"cutoff": cutoff, "last_id": last_id,
-                 "last_op": last_operation_id, "lim": limit + 1},
+                 "last_op": last_operation_id,
+                 "last_code": last_code, "last_dest": last_destination,
+                 "lim": limit + 1},
             ).mappings().all()
             # A repeated composite cursor (especially in the Chile consolidated
             # view) would silently skip records on the following page.
-            keys = [(int(row["source_pk"]), int(row["operation_type"])) for row in rows]
+            chile_remittance = (source, dataset) == ("CHILE", "remittance")
+            keys = ([(int(r["operation_type"]), int(r["code"]),
+                      int(r["cursor_destination"])) for r in rows]
+                    if chile_remittance else
+                    [(int(r["source_pk"]), int(r["operation_type"])) for r in rows])
             if len(keys) != len(set(keys)):
                 raise RuntimeError(f"{source}/{dataset}: non-unique source cursor detected")
+            # Reject malformed / unexpectedly unsorted pages instead of advancing
+            # a cursor that could skip data. Compare to previous committed key.
+            previous = ((last_operation_id, last_code, last_destination)
+                        if chile_remittance else (last_id, last_operation_id))
+            if any(key <= previous for key in keys) or keys != sorted(keys):
+                raise RuntimeError(f"{source}/{dataset}: unordered or regressed source keyset")
             return [normalize(source, dataset, dict(row)) for row in rows[:limit]]
     finally:
         engine.dispose()

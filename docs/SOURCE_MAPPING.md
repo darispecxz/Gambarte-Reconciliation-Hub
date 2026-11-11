@@ -13,7 +13,7 @@ Los contratos de esquema, estados y tipos fueron contrastados con consultas READ
 `tmp_reporte_remesa` centraliza información de `remesa` y `deposito_bancario` y se debe utilizar como fuente principal del ETL. No sustituirla por lectura exclusiva de `remesa`.
 
 ## Comprobaciones necesarias antes de activar ETL
-1. Verificar la unicidad de la combinación `(id_remesa, id_operacion)` dentro de la vista/tablas consolidadas, incluyendo depósitos bancarios.
+1. Chile PRIMARY confirmada: `(id_operacion, codigo, id_destino)`. Revisar cobertura y consistencia de la tabla consolidada, incluyendo depósitos bancarios; el keyset ahora utiliza esta clave, NO `(id_remesa, id_operacion)`.
 2. Tipos `(4,16)`, `(4,7)`, `(3,5,6,8)` confirmados en el POC y legado; **validar vigencia de cada subtipo e impacto de operaciones no bilaterales**.
 3. Estados definidos en el POC; verificar transiciones y casos reales de pagos tardíos.
 4. `abr_ori`/`abr_des` son agencias/localidades; nunca inferir dirección desde ellas.
@@ -96,3 +96,24 @@ el ETL por sí solas**: `ENABLE_SOURCE_ETL=false` y
 Para reglas de decisión y futuras cuentas ver los archivos
 `OPERATIONAL_RECONCILIATION.md` y
 `ACCOUNTING_RECONCILIATION_ROADMAP.md`.
+
+## Índices y extracción Chile (EXPLAIN)
+
+Confirmado en consulta de metadatos: PRIMARY
+`(id_operacion,codigo,id_destino)`; `id_remesa` y esos tres
+campos son `int(11) NOT NULL`, `fec_crea_remesa` es DATETIME
+NOT NULL y `fec_mod_remesa` DATETIME nullable.
+
+- Consulta antigua: `range`, 302,617 filas estimadas,
+  `Using where; Using filesort`.
+- Prueba con prefijo `id_operacion=3` y orden PRIMARY:
+  `ref`, 151,308 filas estimadas, `Using where` y sin filesort.
+- Estos números no son tiempos ni recuentos de filas realmente leídas.
+  El plan definitivo con ventana de fechas/OR deberá verificarse tras
+  actualizar la aplicación.
+
+Migración `0004_chile_cursor`: cursores nuevos `last_code`,
+`last_destination_id`, identidad de Chile remittance
+`id_operacion:codigo:id_destino`. Si la base central contiene
+remesas Chile previamente importadas, la migración **se detiene
+en forma segura** y requiere tratamiento manual supervisado.
