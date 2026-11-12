@@ -1,0 +1,49 @@
+# Optional, manually invoked isolated pilot; does not alter normal Compose services.
+# Run: docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot run --rm pilot-import ...
+services:
+  pilot-db:
+    profiles: ["pilot"]
+    image: mariadb:11.4
+    restart: "no"
+    environment:
+      MARIADB_DATABASE: gambarte_reconciliation_pilot
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes:
+      - pilot_mariadb_data:/var/lib/mysql
+      - ./pilot/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # No host port published.
+  pilot-migrate:
+    profiles: ["pilot"]
+    build: .
+    env_file: .env
+    environment: &pilot_env
+      DB_HOST: pilot-db
+      DB_PORT: "3306"
+      DB_NAME: gambarte_reconciliation_pilot
+      ENABLE_SOURCE_ETL: "false"
+      SOURCE_MAPPING_VERIFIED: "false"
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      pilot-db:
+        condition: service_healthy
+  pilot-import:
+    profiles: ["pilot"]
+    build: .
+    env_file: .env
+    environment: *pilot_env
+    command: ["python", "-m", "scripts.pilot_import"]
+    restart: "no"
+    depends_on:
+      pilot-migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pilot_mariadb_data:

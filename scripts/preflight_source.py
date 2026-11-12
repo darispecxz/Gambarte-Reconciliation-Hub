@@ -22,6 +22,7 @@ def parser():
     p.add_argument("--days", type=int, default=60)
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--explain-only", action="store_true")
+    p.add_argument("--pages", type=int, default=1, choices=(1, 2))
     return p
 
 
@@ -44,9 +45,22 @@ def inspect_page(source, dataset, rows):
     return statuses
 
 
-def run(source, dataset, days, limit, explain_only=False):
-    if not 1 <= days <= 90 or not 1 <= limit <= 100:
-        raise ValueError("Safety limits: 1..90 days and 1..100 rows")
+def next_cursor_params(source, dataset, last_row, params):
+    """Advance on the full real key without using OFFSET."""
+    next_params = dict(params)
+    if (source, dataset) == ("CHILE", "remittance"):
+        next_params["last_op"] = int(last_row["operation_type"])
+        next_params["last_code"] = int(last_row["code"])
+        next_params["last_dest"] = int(last_row["cursor_destination"])
+    else:
+        next_params["last_id"] = int(last_row["source_pk"])
+        next_params["last_op"] = int(last_row["operation_type"])
+    return next_params
+
+
+def run(source, dataset, days, limit, explain_only=False, pages=1):
+    if not 1 <= days <= 90 or not 1 <= limit <= 100 or pages not in (1, 2):
+        raise ValueError("Safety limits: 1..90 days, 1..100 rows/page, 1..2 pages")
     settings = get_settings()
     if settings.enable_source_etl or settings.source_mapping_verified:
         raise RuntimeError(
@@ -90,23 +104,37 @@ def run(source, dataset, days, limit, explain_only=False):
                       "extra=", item.get("Extra"))
             if explain_only:
                 return {"plan_only": True}
-            started = perf_counter()
-            rows = conn.execute(text(sql), params).mappings().all()
-            elapsed = perf_counter() - started
-            statuses = inspect_page(source, dataset, rows)
-            print(f"selected_rows={len(rows)} elapsed_seconds={elapsed:.3f}")
-            print("ordered_unique_keys=True")
-            print("status_counts=", dict(sorted(statuses.items())))
-            print("sample_is_capped=", len(rows) == limit)
-            print("NOTE: one page only, not a complete historical coverage audit.")
-            return {"count": len(rows), "statuses": statuses}
+            total = 0
+            combined = Counter()
+            prior_key = None
+            for page_no in range(1, pages + 1):
+                started = perf_counter()
+                rows = conn.execute(text(sql), params).mappings().all()
+                elapsed = perf_counter() - started
+                statuses = inspect_page(source, dataset, rows)
+                if rows and prior_key is not None and key_for(source, dataset, rows[0]) <= prior_key:
+                    raise RuntimeError("Pages overlap or keyset regressed")
+                if rows:
+                    prior_key = key_for(source, dataset, rows[-1])
+                    params = next_cursor_params(source, dataset, rows[-1], params)
+                total += len(rows)
+                combined.update(statuses)
+                print(f"page={page_no} selected_rows={len(rows)} elapsed_seconds={elapsed:.3f}")
+                print("ordered_unique_keys=True")
+                print("status_counts=", dict(sorted(statuses.items())))
+                print("sample_is_capped=", len(rows) == limit)
+                if len(rows) < limit:
+                    break
+            print(f"total_pages_checked={page_no} total_rows_checked={total}")
+            print("NOTE: bounded sample only, not a complete historical coverage audit.")
+            return {"count": total, "statuses": combined}
     finally:
         engine.dispose()
 
 
 def main():
     args = parser().parse_args()
-    run(args.source, args.dataset, args.days, args.limit, args.explain_only)
+    run(args.source, args.dataset, args.days, args.limit, args.explain_only, args.pages)
 
 
 if __name__ == "__main__":

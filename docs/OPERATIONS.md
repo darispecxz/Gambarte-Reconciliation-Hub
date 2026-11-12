@@ -170,3 +170,60 @@ resolución puntual segura de pagos tardíos.
 solo dataset, a una DB central aislada y con límites de filas,
 sin worker automático. Debe esperar a que todos los preflight estén
 revisados y se haya validado la identidad/reglas de negocio.
+
+## Fase C: prueba de dos páginas y pilot aislado
+
+El plan y la primera página de los cuatro extractores fueron revisados
+(2026-11-12). Las tablas fuente tienen PRIMARY: BO remesa=id_remesa,
+BO pago=id_pago, CL pago=id_pago; CL tmp_reporte_remesa=
+(id_operacion,codigo,id_destino). Ejecutar el preflight de 2 páginas:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset remittance --days 60 --limit 50 --pages 2
+docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset payment --days 60 --limit 50 --pages 2
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset payment --days 60 --limit 50 --pages 2
+```
+
+El modo de 2 páginas usa la misma transacción READ ONLY por dataset,
+valida progresión estricta del keyset y no escribe cursores ni datos.
+
+La importación piloto **NO usa la DB central habitual**, sino un servicio
+MariaDB local adicional `pilot-db`, sin puertos publicados, con volumen
+`pilot_mariadb_data` distinto de `mariadb_data`. El overlay
+`compose.pilot.yaml` configura `pilot-migrate` y `pilot-import`.
+Solo se arranca al invocarlo explícitamente con `--profile pilot`.
+La primera prueba se restringe a Bolivia remesas, 60 días y 50 filas,
+con respaldo de transacción source READ ONLY.
+
+```bash
+docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot build pilot-import pilot-migrate
+
+# Paso A: vista previa sin escrituras a la DB central ni pilot
+docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50
+
+# Paso B: solo tras revisar A; almacena datos REALES en pilot aislado
+docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Paso C: repetir exactamente B. Debe mostrar pilot_rows_inserted_or_updated=0
+# si los 50 registros no cambiaron en las fuentes.
+```
+
+El script verifica nombre exacto de host/DB piloto y una tabla sentinela
+creada **solo al inicializar el volumen piloto**, lo que evita que
+un parámetro mal configurado envíe escrituras a la DB principal.
+No modifica SyncCursor, no activa workers, no crea cobertura
+operativa y no valida el match entre países. La transformación de
+dirección se mantiene deshabilitada por las barreras existentes.
+
+**Protección de datos:** la prueba guarda códigos, importes y estados
+reales en el volumen local piloto; proteger acceso a Docker y respaldos
+y no publicar dumps/logs. `pilot-db` no publica puerto a host.
+No ejecutar `docker compose down -v` con servicios productivos.
+No eliminar el volumen piloto sin plan explícito de retención y
+revisión de las muestras.
+
+El marcador `pilot_instance_guard` se crea la primera vez que MariaDB
+inicializa el volumen. Si el volumen ya existía sin el marcador,
+la importación falla de forma cerrada. Para sesiones simultáneas de
+pilot con workers activos, evitar ejecución duplicada; la prueba
+requiere workers ETL deshabilitados en las opciones del pilot.

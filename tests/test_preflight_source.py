@@ -35,3 +35,16 @@ def test_other_dataset_key_is_not_chile_composite():
     assert key_for("BOLIVIA", "remittance", {
         "source_pk": 10, "operation_type": 16
     }) == (10, 16)
+
+from scripts.preflight_source import next_cursor_params
+
+
+def test_two_page_cursor_uses_real_primary():
+    base = {"last_id": 0, "last_op": 0, "last_code": 0, "last_dest": 0}
+    chile = next_cursor_params("CHILE", "remittance", chile_row(100, 2), base)
+    assert (chile["last_op"], chile["last_code"], chile["last_dest"]) == (3, 100, 2)
+    assert chile["last_id"] == 0
+    bolivia = next_cursor_params("BOLIVIA", "payment", {
+        "source_pk": 31, "operation_type": 7
+    }, base)
+    assert (bolivia["last_id"], bolivia["last_op"]) == (31, 7)
