@@ -141,3 +141,37 @@ equivalen a cobertura certificada de la fuente. Todavía faltan conteos
 cruzados por mes, cambios históricos, códigos ambiguos y operaciones
 de origen anterior a 2026 pagadas durante 2026. Los valores anuales
 de gerencia se mantienen PRELIMINARES hasta cerrar esos controles.
+
+
+## Validación independiente de conteos mensuales
+
+Usar scripts.pilot_month_count antes de importar meses adicionales.
+Cada comprobación se ejecuta para un país, dataset y mes, con el mismo
+filtro de fecha de creación y tipos de operación que el backfill.
+La extracción y el COUNT se ejecutan en momentos distintos: una
+coincidencia puede dejar de ser válida si llegan altas o correcciones,
+y no comprueba operaciones de años anteriores.
+
+**Primero ver el plan EXPLAIN, sin ejecutar COUNT:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_month_count \
+  --source BOLIVIA --dataset remittance --month 2026-01
+```
+
+Si el plan SQL utiliza índice y el costo es aceptable, ejecutar COUNT
+con la opción --count:
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_month_count \
+  --source BOLIVIA --dataset remittance --month 2026-01 --count
+```
+
+Repetir cambiando --source y --dataset para los cuatro pares. Nunca
+activar ETL ni SOURCE_MAPPING_VERIFIED. Las salidas posibles son
+COUNT_MATCH_NOT_CERTIFIED, COUNT_MISMATCH_REVIEW_REQUIRED y
+SCAN_INCOMPLETE. Son controles de conteo, no certificación completa
+de conciliación. No automatizar los cuatro COUNT de Chile antes de
+inspeccionar los planes individuales.
