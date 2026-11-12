@@ -27,9 +27,10 @@ def example_row(source, dataset, ident, code="TEST-CL-100"):
         code=code, status="PAID" if dataset == "remittance" else "RECORDED",
         amount=Decimal("100.00") if origin else Decimal("690.00"),
         currency="USD" if origin else "BOB",
-        raw={"source_pk": ident, "operation_type": 3, "code": code,
+        raw={"source_pk": ident, "operation_type": 4 if dataset == "payment" and source == "BOLIVIA" else 3, "code": code,
              "amount": "100.00" if origin else "690.00", "status_code": 1},
-        operation_type=3, direction="CL_TO_BO" if dataset == "remittance" else None,
+        operation_type=4 if dataset == "payment" and source == "BOLIVIA" else 3,
+        direction="CL_TO_BO" if dataset == "remittance" and source == "CHILE" else None,
         occurred_at=now(), source_pk=ident,
     )
 

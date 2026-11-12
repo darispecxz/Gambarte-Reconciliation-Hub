@@ -175,6 +175,15 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                 # No matching payment by cutoff cannot be certified absent.
                 decision = Decision("INSUFFICIENT_DATA",
                                     "No full payment history verified at requested cutoff")
+            # Never assert missing payment merely because a rolling window
+            # contains the origin date. Payment SLA and audited completeness
+            # by modality are not yet approved for historical 2026 evidence.
+            if decision.result == "PAYMENT_MISSING":
+                decision = Decision(
+                    "INSUFFICIENT_DATA",
+                    "Destination payment absence is not certified: "
+                    "coverage completeness and payment deadline unverified",
+                )
             counterpart_id = candidates[0].id if len(candidates) == 1 else None
             session.add(ReconciliationMatch(
                 run_id=run.id, remittance_id=rem.id, counterpart_id=counterpart_id,

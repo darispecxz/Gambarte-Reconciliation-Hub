@@ -267,3 +267,12 @@ inicializa el volumen. Si el volumen ya existía sin el marcador,
 la importación falla de forma cerrada. Para sesiones simultáneas de
 pilot con workers activos, evitar ejecución duplicada; la prueba
 requiere workers ETL deshabilitados en las opciones del pilot.
+
+
+## Informe ejecutivo 2026 (solo muestra)
+
+Ver `docs/GERENCIA_CONCILIACION_2026.md` para comandos del exportador,
+limitaciones de cobertura y aceptación antes de presentar cifras anuales.
+El generador `scripts.management_report_2026` lee exclusivamente la DB
+piloto y produce un HTML imprimible en una carpeta local privada.
+**No certifica toda la gestión 2026** ni activa la sincronización.

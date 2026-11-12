@@ -7,3 +7,6 @@ __pycache__/
 .venv/
 .idea/
 .vscode/
+
+# Confidential operational exports; never commit real codes or financial rows.
+private-reports/
