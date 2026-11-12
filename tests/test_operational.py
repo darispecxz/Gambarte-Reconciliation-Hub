@@ -221,7 +221,9 @@ def test_cutoff_unknown_payment_date_is_insufficient():
     assert decide(operation(), [], [payment()],
                   cutoff_at=datetime(2026, 10, 31)).result == "INSUFFICIENT_DATA"
 
-from app.domain.operation_types import classify_operation
+from app.domain.operation_types import (
+    allowed_destination_payment_types, classify_operation,
+)
 
 
 def test_poc_operation_modalities_and_unknown():
@@ -234,3 +236,10 @@ def test_poc_operation_modalities_and_unknown():
     assert classify_operation("CHILE", "remittance", 8) == "BANK_LOAN"
     assert classify_operation("CHILE", "payment", 8) == "LEGACY_TYPE_8"
     assert classify_operation("CHILE", "remittance", 999) == "UNKNOWN"
+
+
+def test_confirmed_chile_to_bolivia_payment_pairings():
+    assert allowed_destination_payment_types("CHILE", "BOLIVIA", 3) == {4}
+    assert allowed_destination_payment_types("CHILE", "BOLIVIA", 5) == {7}
+    assert allowed_destination_payment_types("CHILE", "BOLIVIA", 6) == {7}
+    assert allowed_destination_payment_types("CHILE", "BOLIVIA", 8) == {7}

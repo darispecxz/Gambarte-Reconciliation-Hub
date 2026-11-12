@@ -9,7 +9,7 @@ ZIP de PHP Bolivia y Chile. Ver `SOURCE_MAPPING.md` para moneda y esquema.
 | Dirección | Origen (remesa) | Pago en destino | Tipos |
 |---|---|---|---|
 | BO→CL | Bolivia `remesa` | Chile `pago` | Remesa 4 histórica / 16 vigente; pagos Chile 3/5/6/8 según POC |
-| CL→BO | Chile `tmp_reporte_remesa` | Bolivia `pago` | Remesa Chile 3/5/6/8; pagos Bolivia 4 (ventanilla), 7 (depósito) |
+| CL→BO | Chile `tmp_reporte_remesa` | Bolivia `pago` | Confirmado: remesa 3 → pago 4 (ventanilla); remesas 5/6/8 → pago 7 |
 
 La clave de cruce es el **mismo `codigo`** entre origen y destino,
 pero su unicidad histórica debe verificarse; si hay varias filas no forzar
@@ -18,7 +18,8 @@ una relación 1:1. No exigir remesa espejo en el país que paga.
 La vista `tmp_reporte_remesa` consolida productos distintos; en el
 PHP de Chile se observaron las tablas `remesa` (3),
 `deposito_bancario` (5,6) y `prestamo_bancario` (8).
-El significado de cada subtipo requiere validación de negocio. Los
+Los tipos 3, 5, 6 y 8 tienen forma de pago destino confirmada con casos reales.
+La modalidad de origen se conserva: 5/6 depósito y 8 préstamo. Los
 códigos `abr_ori`/`abr_des` son agencias, no países.
 
 ## Estados

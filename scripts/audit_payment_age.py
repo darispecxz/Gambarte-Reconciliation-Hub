@@ -90,6 +90,14 @@ def fetch_payment_sample(connection, types, days, limit):
         "AND p.fec_crea_pago >= NOW() - INTERVAL %s DAY "
         "ORDER BY p.fec_crea_pago DESC,p.id_pago DESC LIMIT %s"
     )
+    with connection.cursor(pymysql.cursors.DictCursor) as plan_cursor:
+        plan_cursor.execute("EXPLAIN " + query, (*types, days, limit))
+        for item in plan_cursor.fetchall():
+            print(f"payment_plan_access={item.get('type')} "
+                  f"payment_plan_key={item.get('key')} "
+                  f"payment_plan_estimated_rows={item.get('rows')}")
+            if item.get("type") in {"ALL", "index"} and int(item.get("rows") or 0) > 50000:
+                raise RuntimeError("Payment sample plan exceeds safe scan threshold")
     with connection.cursor() as cursor:
         cursor.execute(query, (*types, days, limit))
         return cursor.fetchall()
@@ -109,6 +117,16 @@ def fetch_origins(connection, table, types, codes):
                 f"WHERE id_operacion IN ({marks}) "
                 f"AND codigo IN ({placeholders}) LIMIT 201"
             )
+            with connection.cursor(pymysql.cursors.DictCursor) as plan_cursor:
+                plan_cursor.execute("EXPLAIN " + query, (*types, *chunk))
+                for item in plan_cursor.fetchall():
+                    if int(item.get("rows") or 0) > 50000:
+                        raise RuntimeError(
+                            "Origin lookup plan exceeds safe estimate; "
+                            "do not scan source for these codes"
+                        )
+            if offset == 0:
+                print("origin_lookup_plan_checked=True")
             cursor.execute(query, (*types, *chunk))
             rows = cursor.fetchall()
             if len(rows) > 200:

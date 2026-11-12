@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.domain.matching import Decision, OperationEvidence, PaymentEvidence, decide
-from app.domain.operation_types import classify_operation
+from app.domain.operation_types import (
+    allowed_destination_payment_types, classify_operation,
+)
 from app.infrastructure.models import (
     Discrepancy, Payment, ReconciliationMatch, ReconciliationRun, Remittance,
     SyncCursor, SyncRun, now,
@@ -101,6 +103,9 @@ def execute(session: Session, run: ReconciliationRun) -> int:
             ):
                 continue
             evidence = _operation(rem)
+            compatible_payments = []
+            unexpected_payments = []
+            allowed_payment_types = None
             if rem.direction in ("BO_TO_CL", "CL_TO_BO"):
                 origin = "BOLIVIA" if rem.direction == "BO_TO_CL" else "CHILE"
                 if rem.source != origin:
@@ -114,15 +119,39 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                     destination = "CHILE" if origin == "BOLIVIA" else "BOLIVIA"
                     candidates = [c for c in index.get((destination, rem.code), [])
                                   if c.direction in (None, rem.direction)]
+                    all_payments = payment_index.get((destination, rem.code), [])
+                    allowed_payment_types = allowed_destination_payment_types(
+                        origin, destination, rem.operation_type
+                    )
+                    compatible_payments = (
+                        [p for p in all_payments
+                         if p.operation_type in allowed_payment_types]
+                        if allowed_payment_types is not None else []
+                    )
+                    unexpected_payments = (
+                        [p for p in all_payments
+                         if p.operation_type not in allowed_payment_types]
+                        if allowed_payment_types is not None else all_payments
+                    )
                     # Multiple same-code origin rows cannot be safely paired.
                     if len(index[(origin, rem.code)]) > 1:
                         decision = Decision("MANUAL_REVIEW", "Ambiguous origin code")
+                    elif allowed_payment_types is None:
+                        decision = Decision(
+                            "INSUFFICIENT_DATA",
+                            "Origin-to-destination payment type mapping is unverified",
+                        )
+                    elif unexpected_payments:
+                        decision = Decision(
+                            "MANUAL_REVIEW",
+                            "Payment exists with a type outside the approved mapping",
+                        )
                     elif not candidates and index.get((destination, rem.code)):
                         decision = Decision("STATUS_MISMATCH", "Counterpart has a contradictory direction")
                     else:
                         # Destination may have only a payment, not a mirrored remesa.
                         decision = decide(evidence, [_operation(c) for c in candidates],
-                                          payment_index.get((destination, rem.code), []),
+                                          compatible_payments,
                                           cutoff_at=run.cutoff_at)
             else:
                 candidates = []
@@ -156,18 +185,24 @@ def execute(session: Session, run: ReconciliationRun) -> int:
                                                           rem.operation_type),
                     "destination_payment_modalities": [
                         classify_operation(destination, "payment", p.operation_type)
-                        for p in payment_index.get((destination, rem.code), [])
+                        for p in compatible_payments
                     ],
+                    "approved_destination_payment_types": (
+                        sorted(allowed_payment_types)
+                        if allowed_payment_types is not None else []
+                    ),
+                    "unexpected_payment_type_ids": sorted({
+                        p.operation_type for p in unexpected_payments
+                        if p.operation_type is not None
+                    }),
                     "candidate_ids": [c.id for c in candidates],
                     "destination": destination,
                     "cutoff_at": run.cutoff_at.isoformat() if run.cutoff_at else None,
-                    "matched_payment_ids": [p.id for p in
-                                            payment_index.get((destination, rem.code), [])
+                    "matched_payment_ids": [p.id for p in compatible_payments
                                             if run.cutoff_at is None or
                                             (p.occurred_at is not None and
                                              p.occurred_at <= run.cutoff_at)],
-                    "payments_after_cutoff_ids": [p.id for p in
-                                                   payment_index.get((destination, rem.code), [])
+                    "payments_after_cutoff_ids": [p.id for p in compatible_payments
                                                    if run.cutoff_at is not None and
                                                    p.occurred_at is not None and
                                                    p.occurred_at > run.cutoff_at],

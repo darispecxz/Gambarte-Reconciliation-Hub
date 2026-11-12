@@ -94,6 +94,9 @@ hasta revisar estos resultados y la cobertura del backfill/solapamiento.
 
 ## Desglose de antigüedad para dimensionar el backfill
 
+La muestra reciente del 2026-11-12 y la decisión de no ejecutar la
+consulta costosa de Chile remesas constan en `RECENT_AUDIT.md`.
+
 El mismo diagnóstico imprime bandas adicionales `paid_between_30_and_60_days_after_origin`,
 `paid_between_60_and_90_days_after_origin`,
 `paid_more_than_90_days_after_origin` y `max_lag_days`
@@ -179,9 +182,9 @@ BO pago=id_pago, CL pago=id_pago; CL tmp_reporte_remesa=
 (id_operacion,codigo,id_destino). Ejecutar el preflight de 2 páginas:
 
 ```bash
-docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset remittance --days 60 --limit 50 --pages 2
-docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset payment --days 60 --limit 50 --pages 2
-docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset payment --days 60 --limit 50 --pages 2
+docker compose run --rm --no-deps api python -m scripts.preflight_source --source BOLIVIA --dataset remittance --days 60 --limit 50 --pages 2
+docker compose run --rm --no-deps api python -m scripts.preflight_source --source BOLIVIA --dataset payment --days 60 --limit 50 --pages 2
+docker compose run --rm --no-deps api python -m scripts.preflight_source --source CHILE --dataset payment --days 60 --limit 50 --pages 2
 ```
 
 El modo de 2 páginas usa la misma transacción READ ONLY por dataset,
@@ -189,28 +192,65 @@ valida progresión estricta del keyset y no escribe cursores ni datos.
 
 La importación piloto **NO usa la DB central habitual**, sino un servicio
 MariaDB local adicional `pilot-db`, sin puertos publicados, con volumen
-`pilot_mariadb_data` distinto de `mariadb_data`. El overlay
+`pilot_mariadb_data` distinto de `mariadb_data`. El proyecto independiente
 `compose.pilot.yaml` configura `pilot-migrate` y `pilot-import`.
 Solo se arranca al invocarlo explícitamente con `--profile pilot`.
 La primera prueba se restringe a Bolivia remesas, 60 días y 50 filas,
 con respaldo de transacción source READ ONLY.
+Las vistas previas de Bolivia pagos, Chile pagos y Chile remesas están
+disponibles con `--source` y `--dataset`. Después de validar el primer
+lote de remesas, `--apply` se habilitó gradualmente para los otros tres
+datasets. Solo se permiten lotes manuales de hasta 50 registros por
+dataset hacia el piloto. Cada vista previa lee como máximo 50 filas,
+comprueba el marcador piloto en transacción `READ ONLY` y no importa datos.
 
 ```bash
-docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot build pilot-import pilot-migrate
+docker compose -f compose.pilot.yaml --profile pilot build pilot-import pilot-migrate
 
-# Paso A: vista previa sin escrituras a la DB central ni pilot
-docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50
+# Paso A: crea el esquema piloto si falta; no importa registros financieros
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50
+
+# Vistas previas adicionales
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_import --source BOLIVIA --dataset payment --days 60 --limit 50
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_import --source CHILE --dataset payment --days 60 --limit 50
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_import --source CHILE --dataset remittance --days 60 --limit 50
 
 # Paso B: solo tras revisar A; almacena datos REALES en pilot aislado
-docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50 --apply --acknowledge-sensitive-data
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Segundo dataset, siempre con lote máximo de 50 y autorización operativa
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --source BOLIVIA --dataset payment --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Tercer dataset, Chile pagos; fuente siempre READ ONLY
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --source CHILE --dataset payment --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Cuarto dataset, Chile remesas; identidad op:codigo:id_destino
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --source CHILE --dataset remittance --days 60 --limit 50 --apply --acknowledge-sensitive-data
 
 # Paso C: repetir exactamente B. Debe mostrar pilot_rows_inserted_or_updated=0
 # si los 50 registros no cambiaron en las fuentes.
+
+# Auditoría agregada, solo lectura; repetir tras importar Bolivia remesas
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_audit
+
+# Prueba sintética de versionado; hace rollback y no conserva datos
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_version_probe
+
+# Candidatos agregados por codigo; solo lectura, sin MATCHED persistido
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_candidates
+
+# Clasificación provisional por estado y codigo; no persiste resultados
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_reconcile
 ```
 
 El script verifica nombre exacto de host/DB piloto y una tabla sentinela
 creada **solo al inicializar el volumen piloto**, lo que evita que
 un parámetro mal configurado envíe escrituras a la DB principal.
+La vista previa verifica también ese destino mediante una transacción
+`READ ONLY` y termina con `ROLLBACK`. No combinar `compose.yaml` con
+`compose.pilot.yaml`: en esta instalación de Compose se observó que
+la combinación inició también el servicio `migrate` central. El piloto
+usa el proyecto Compose `gambarte-pilot` y su propio volumen.
 No modifica SyncCursor, no activa workers, no crea cobertura
 operativa y no valida el match entre países. La transformación de
 dirección se mantiene deshabilitada por las barreras existentes.

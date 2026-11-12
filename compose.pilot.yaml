@@ -1,5 +1,7 @@
-# Optional, manually invoked isolated pilot; does not alter normal Compose services.
-# Run: docker compose -f compose.yaml -f compose.pilot.yaml --profile pilot run --rm pilot-import ...
+# Standalone pilot project. Do not combine with compose.yaml: older Compose
+# versions may start the central migrate service when both files are supplied.
+# Run: docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import ...
+name: gambarte-pilot
 services:
   pilot-db:
     profiles: ["pilot"]

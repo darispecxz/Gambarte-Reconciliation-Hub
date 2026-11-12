@@ -6,7 +6,7 @@ Los contratos de esquema, estados y tipos fueron contrastados con consultas READ
 |---|---|---|---|
 | Bolivia | remesa | id_remesa, codigo, estado, monto, mon_rec, id_operacion, fechas | Columnas verificadas |
 | Bolivia | pago | id_pago, codigo, monto, mon_rec, id_operacion, id_forma_pago, id_tipo_pago, fec_crea_pago | Columnas verificadas |
-| Chile | tmp_reporte_remesa | id_remesa, codigo, estado, envio, moneda, id_operacion, abr_ori, abr_des, fechas | Columnas verificadas; identidad compuesta pendiente |
+| Chile | tmp_reporte_remesa | id_remesa, codigo, estado, envio, moneda, id_operacion, abr_ori, abr_des, fechas | Columnas verificadas; PRIMARY compuesta confirmada |
 | Chile | pago | id_pago, codigo, monto, mon_rec, id_operacion, id_forma_pago, id_tipo_pago, fec_crea_pago | Columnas verificadas |
 
 ## Regla de Chile
@@ -14,7 +14,8 @@ Los contratos de esquema, estados y tipos fueron contrastados con consultas READ
 
 ## Comprobaciones necesarias antes de activar ETL
 1. Chile PRIMARY confirmada: `(id_operacion, codigo, id_destino)`. Revisar cobertura y consistencia de la tabla consolidada, incluyendo depósitos bancarios; el keyset ahora utiliza esta clave, NO `(id_remesa, id_operacion)`.
-2. Tipos `(4,16)`, `(4,7)`, `(3,5,6,8)` confirmados en el POC y legado; **validar vigencia de cada subtipo e impacto de operaciones no bilaterales**.
+2. Contrato confirmado con casos reales: Chile remesa 3 → Bolivia pago 4
+   (ventanilla); Chile remesas 5, 6 y 8 → Bolivia pago 7.
 3. Estados definidos en el POC; verificar transiciones y casos reales de pagos tardíos.
 4. `abr_ori`/`abr_des` son agencias/localidades; nunca inferir dirección desde ellas.
 5. Catálogos de moneda por país verificados en lectura; conservar siempre el ID original como evidencia.
@@ -29,7 +30,10 @@ Los contratos de esquema, estados y tipos fueron contrastados con consultas READ
 Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas con `SHOW CREATE TABLE`, índices y un conjunto pequeño de casos conocidos (envío, pago, devolución, depósito, anulación); no copiar datos privados a GitHub. La herramienta no modifica registros de Bolivia/Chile.
 
 ## Configuración de dirección
-`BOLIVIA_TO_CHILE_OPERATION_TYPES=4,16` y `CHILE_TO_BOLIVIA_OPERATION_TYPES=3,5,6,8` representan los grupos del POC. **No son autorización de ETL**; revisar giros a destinos fuera del circuito bilateral. Las remesas sin dirección aprobada se clasifican como `INSUFFICIENT_DATA`.
+`BOLIVIA_TO_CHILE_OPERATION_TYPES=4,16` y
+`CHILE_TO_BOLIVIA_OPERATION_TYPES=3,5,6,8` son las listas actuales. **No
+son autorización de ETL**. Las remesas sin dirección aprobada se clasifican
+como `INSUFFICIENT_DATA`.
 
 ## Validaciones confirmadas (11-11-2026, consultas READ ONLY)
 
@@ -53,6 +57,10 @@ Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas co
   (estado 0 y 1), pagos Bolivia tipos 3/4/7, Chile remesa tipos 3/5 y
   pagos Chile tipo 3. Observar un tipo NO demuestra que sea exclusivo de
   remesas transfronterizas; **no habilitar automáticamente**.
+- Cuatro casos reales, revisados sin conservar datos personales en el
+  repositorio, confirmaron `Chile remesa 3 → Bolivia pago 4` y
+  `Chile remesas 5/6/8 → Bolivia pago 7`, unidos por `codigo`. También se
+  confirmó que un `codigo` negativo en Chile representa una operación anulada.
 - El POC documenta los estados, pero siguen pendientes la unicidad histórica
   de código, la combinación única de la vista Chile, transiciones extremas
   y el significado contractual de importes. MATCHED no concilia montos.
@@ -60,6 +68,16 @@ Trabajar sobre una copia anonimizada o entorno de pruebas. Verificar columnas co
   catálogo de Chile, sin cambiarlas a ARS/PYG por suposición.
 
 ## Implementación protegida
+
+### Muestreo mínimo de tipos Chile (2026-11-12)
+
+Consulta de solo lectura, `EXPLAIN` previo y `LIMIT 2` por tipo, sin
+filtro de fecha: `tmp_reporte_remesa` devolvió dos ejemplos de cada
+tipo 5, 6 y 8. Chile `pago` devolvió cero ejemplos para 5, 6 y 8;
+la muestra piloto de `pago` contiene tipo 3. Esto cuestiona que 5/6/8
+deban tratarse como tipos de **pago** de Chile en el contrato actual.
+Los identificadores de los ejemplos se guardaron solo en un CSV local
+ignorado por Git para validación de negocio; no se publican aquí.
 
 `app/integrations/source.py` mantiene diccionarios de monedas **separados**
 por país, mientras la evidencia `raw.currency_id` conserva el identificador
