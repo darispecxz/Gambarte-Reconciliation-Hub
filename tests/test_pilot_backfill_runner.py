@@ -91,3 +91,16 @@ def test_never_accepts_incomplete_result_as_verified():
     with pytest.raises(RuntimeError):
         verified_result({"counted": True, "status": "SCAN_INCOMPLETE"},
                         "CHILE", "payment", "2026-01")
+
+
+def test_unindexed_count_is_blocked_but_other_dataset_is_checked():
+    with (patch("scripts.pilot_backfill_runner.get_settings", return_value=config()),
+          patch("scripts.pilot_backfill_runner.verify_month", side_effect=[
+              {"counted": False, "status": "COUNT_PLAN_BLOCKED"},
+              {"counted": True, "status": "COUNT_MATCH_NOT_CERTIFIED"},
+          ]) as verify,
+          patch("scripts.pilot_backfill_runner.execute") as ingest):
+        with pytest.raises(RuntimeError, match="COUNT plan blocked"):
+            run("2026-01", "CHILE", "all")
+    assert verify.call_count == 2
+    ingest.assert_not_called()

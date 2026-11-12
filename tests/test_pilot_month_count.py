@@ -38,3 +38,37 @@ def test_rejects_main_db_and_active_etl():
         with pytest.raises(RuntimeError):
             validate_settings(SimpleNamespace(**{**base, **invalid}),
                               "CHILE", "remittance", "2026-01")
+
+
+def test_blocked_plan_does_not_run_count_query():
+    from unittest.mock import patch, MagicMock
+    from scripts.pilot_month_count import run
+    from contextlib import contextmanager
+    from datetime import datetime
+    source_con = MagicMock()
+    source_con.execute.return_value.mappings.return_value.all.return_value = [
+        {"type": "ALL", "key": None, "rows": 400000}]
+    @contextmanager
+    def fake_readonly(_engine):
+        yield source_con
+    pilot_con = MagicMock()
+    pilot_con.execute.side_effect = [MagicMock(scalar_one=lambda: 1),
+                                     MagicMock(mappings=lambda: MagicMock(first=lambda: {
+                                         "rows_seen": 2546, "scan_exhausted": True}))]
+    @contextmanager
+    def fake_pilot():
+        yield pilot_con
+    pilot_engine = MagicMock()
+    pilot_engine.connect.side_effect = fake_pilot
+    with (patch("scripts.pilot_month_count.get_settings", return_value=SimpleNamespace(
+            db_host="pilot-db", db_name="gambarte_reconciliation_pilot",
+            enable_source_etl=False, source_mapping_verified=False)),
+          patch("scripts.pilot_month_count.pilot_engine", return_value=pilot_engine),
+          patch("scripts.pilot_month_count.check_marker"),
+          patch("scripts.pilot_month_count.connect_source"),
+          patch("scripts.pilot_month_count.read_only_transaction", fake_readonly),
+          patch("scripts.pilot_month_count.read_checkpoint", return_value={
+              "rows_seen": 2546, "scan_exhausted": True})):
+        result = run("CHILE", "remittance", "2026-01", count=True)
+    assert result["status"] == "COUNT_PLAN_BLOCKED"
+    assert source_con.execute.call_count == 1

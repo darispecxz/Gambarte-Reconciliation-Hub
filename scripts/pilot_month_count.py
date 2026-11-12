@@ -102,10 +102,15 @@ def run(source, dataset, month, count=False):
                 text("EXPLAIN " + sql),
                 {"from_date": start, "to_date": end},
             ).mappings().all()
-            source_plan_guard(plan)
             print("count_explain=" + ",".join(
                 f"{item.get('type')}/{item.get('key')}/{item.get('rows')}"
-                for item in plan))
+                for item in plan), flush=True)
+            try:
+                source_plan_guard(plan)
+            except RuntimeError as exc:
+                print(f"count_blocked=True reason={exc} "
+                      "source_read_only=True writes_to_pilot=False", flush=True)
+                return {"counted": False, "status": "COUNT_PLAN_BLOCKED"}
             if not count:
                 print("count_not_executed=True dry_run=True source_read_only=True")
                 return {"counted": False}

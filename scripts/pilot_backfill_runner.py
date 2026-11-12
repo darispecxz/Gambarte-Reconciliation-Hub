@@ -69,6 +69,7 @@ def run(month, source="ALL", dataset="all", apply=False,
           f"max_batches={max_batches} max_rows_per_batch={limit*pages} "
           "production_writes=False annual_automation=False")
     results = {}
+    blocked = []
     for s, d in pairs:
         print(f"dataset_started={month}/{s}/{d}")
         exhausted = False
@@ -94,10 +95,21 @@ def run(month, source="ALL", dataset="all", apply=False,
                 # Do not run expensive source COUNT for incomplete datasets.
                 continue
         comparison = verify_month(s, d, month, count=True)
+        if comparison.get("status") == "COUNT_PLAN_BLOCKED":
+            results[(s, d)] = "COUNT_PLAN_BLOCKED"
+            blocked.append(f"{month}/{s}/{d}")
+            print(f"dataset_blocked={month}/{s}/{d} "
+                  "reason=UNSAFE_COUNT_PLAN requires_manual_sql_review=True")
+            continue
         verified_result(comparison, s, d, month)
         results[(s, d)] = comparison["status"]
         print(f"dataset_verified={month}/{s}/{d} "
               "status=COUNT_MATCH_NOT_CERTIFIED")
+    if blocked:
+        print("runner_incomplete=True count_plan_blocked=" + ",".join(blocked)
+              + " coverage_certified=False", flush=True)
+        raise RuntimeError("Source COUNT plan blocked for " + ", ".join(blocked)
+                           + "; remaining datasets were checked safely")
     print("runner_finished=True coverage_certified=False "
           "historical_corrections_checked=False")
     return results
