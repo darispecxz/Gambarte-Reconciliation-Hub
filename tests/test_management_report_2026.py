@@ -57,3 +57,29 @@ def test_does_not_claim_no_payment_is_discrepancy():
 def test_reject_non_2026_report():
     with pytest.raises(ValueError):
         build_summary([], [], year=2025, through=date(2025, 12, 31))
+
+
+def test_export_path_accepts_resolved_bind_mount_symlink(tmp_path, monkeypatch):
+    from scripts import management_report_2026 as report_module
+    mounted = tmp_path / "real-mounted"
+    mounted.mkdir()
+    alias = tmp_path / "export"
+    alias.symlink_to(mounted, target_is_directory=True)
+    monkeypatch.setattr(report_module, "EXPORT_DIR", alias)
+    assert report_module.validate_export_path(str(alias / "report.html")) == alias / "report.html"
+
+
+def test_export_path_refuses_traversal_nested_or_symlink(tmp_path, monkeypatch):
+    from scripts import management_report_2026 as report_module
+    export = tmp_path / "export"
+    export.mkdir()
+    monkeypatch.setattr(report_module, "EXPORT_DIR", export)
+    for path in (export / "nested" / "report.html",
+                 export / ".." / "outside.html",
+                 export / "report.txt"):
+        with pytest.raises(ValueError):
+            report_module.validate_export_path(str(path))
+    link = export / "link.html"
+    link.symlink_to(tmp_path / "outside.html")
+    with pytest.raises(ValueError, match="symlink"):
+        report_module.validate_export_path(str(link))

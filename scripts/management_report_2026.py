@@ -178,6 +178,26 @@ No utilizar para cierre contable, certificación regulatoria o afirmación de au
 </main></body></html>"""
 
 
+def validate_export_path(output):
+    """Allow HTML in /export even when Docker resolves /export via a bind-mount symlink.
+
+    Resolve both sides to the same real directory; reject traversals, nested
+    paths and symlinked output files pointing elsewhere.
+    """
+    destination = Path(output)
+    if (not destination.is_absolute()
+            or destination.parent != EXPORT_DIR
+            or destination.suffix.lower() != ".html"):
+        raise ValueError("Output must be an HTML file directly under /export")
+    if not EXPORT_DIR.is_dir():
+        raise RuntimeError("Mount a private local export directory at /export")
+    if destination.is_symlink():
+        raise ValueError("Output file cannot be a symlink")
+    if destination.parent.resolve(strict=True) != EXPORT_DIR.resolve(strict=True):
+        raise ValueError("Output mount resolves outside approved directory")
+    return destination
+
+
 def run(year=2026, through=None, output=None):
     today = date.today()
     through = through or today
@@ -188,13 +208,7 @@ def run(year=2026, through=None, output=None):
             or settings.enable_source_etl or settings.source_mapping_verified):
         raise RuntimeError("Report requires isolated pilot and disabled workers")
     if output is not None:
-        destination = Path(output)
-        if not destination.is_absolute() or destination.parent.resolve() != EXPORT_DIR:
-            raise ValueError("Output must be a file directly under /export")
-        if not EXPORT_DIR.is_dir():
-            raise RuntimeError("Mount a private local export directory at /export")
-        if destination.suffix.lower() != ".html":
-            raise ValueError("HTML output only")
+        destination = validate_export_path(output)
 
     engine = create_engine(URL.create(
         "mysql+pymysql", host=settings.db_host, port=settings.db_port,
