@@ -175,3 +175,44 @@ COUNT_MATCH_NOT_CERTIFIED, COUNT_MISMATCH_REVIEW_REQUIRED y
 SCAN_INCOMPLETE. Son controles de conteo, no certificación completa
 de conciliación. No automatizar los cuatro COUNT de Chile antes de
 inspeccionar los planes individuales.
+
+
+## Orquestador mensual limitado (no automático en segundo plano)
+
+El módulo `scripts.pilot_backfill_runner` evita invocar manualmente
+cada lote. Su alcance está restringido a un mes por invocación, con
+máximo cinco tandas de 2 páginas x 50 filas para cada dataset.
+Por defecto **solo verifica conteos**, sin escribir ni reimportar.
+
+**Validar automáticamente los dos conteos pendientes de Chile Enero
+(tras revisar sus planes y evitar horas pico):**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_backfill_runner \
+  --month 2026-01 --source CHILE
+```
+
+Cada `COUNT(*)` ejecuta `EXPLAIN` bajo transacción `READ ONLY`
+y rechaza planes no indexados o con estimaciones sobre los límites.
+Si hay diferencia entre el número de filas de origen y las examinadas
+durante backfill, el orquestador **detiene** la ejecución inmediatamente.
+`COUNT_MATCH_NOT_CERTIFIED` verifica únicamente cantidades, no
+identidades ni remesas de años anteriores.
+
+**Para importar el siguiente mes, solo después de autorizarlo y revisar
+la carga prevista:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_backfill_runner \
+  --month 2026-02 --source BOLIVIA --dataset remittance \
+  --apply --acknowledge-sensitive-data --max-batches 5
+```
+
+El comando solo realiza hasta 500 filas por dataset. Repetirlo retoma
+el último cursor confirmado. Cada lote realiza auditoría de integridad
+sobre el piloto y hace pausas; al terminar el cursor se comprueba
+el total de origen. **No** usar `--source ALL --apply` hasta terminar
+la revisión de índices de Chile para cada mes. No hay bucle de enero
+a noviembre ni tareas recurrentes.
