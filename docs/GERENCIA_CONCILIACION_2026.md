@@ -87,3 +87,57 @@ proteger accesos y no compartir el HTML fuera de la organización sin autorizaci
 
 **No cambiar** `ENABLE_SOURCE_ETL=false` ni
 `SOURCE_MAPPING_VERIFIED=false` con la evidencia disponible.
+
+
+## Backfill histórico mensual 2026 — versión controlada
+
+Implementado en scripts/pilot_backfill_2026.py. No es una importación
+automática de todo el año. Usa un solo país, dataset y mes por invocación,
+paginación keyset por clave verificada, filtros de fecha de creación con
+intervalo [primer día del mes, primer día del mes siguiente) y EXPLAIN
+previo a cada página. Rechaza planes sin índice o de costo excesivo.
+No usa OFFSET ni escribe en bases de origen; cada página se lee bajo
+START TRANSACTION READ ONLY y termina con ROLLBACK.
+
+Los registros reales se guardan exclusivamente en la DB pilot-db
+con marcador de seguridad, tras indicar --apply y
+--acknowledge-sensitive-data. Máximo 2 páginas de 50 registros cada
+una por ejecución. El cursor por país/dataset/mes se guarda en
+pilot_backfill_progress en la misma transacción que ingest(), para
+permitir reanudar sin duplicar versiones y eventos. La tabla de progreso
+solo se crea dentro del piloto al aplicar la primera importación.
+
+**Diagnóstico inicial sin escrituras (Bolivia remesas enero):**
+
+```bash
+git pull origin feat/operational-reconciliation-phase-b
+docker compose -f compose.pilot.yaml --profile pilot build pilot-import
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_backfill_2026 \
+  --source BOLIVIA --dataset remittance --month 2026-01 --limit 20
+```
+
+**La carga real exige revisar el plan y autorización del responsable:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_backfill_2026 \
+  --source BOLIVIA --dataset remittance --month 2026-01 \
+  --limit 50 --pages 2 --apply --acknowledge-sensitive-data
+```
+
+Repetir de forma controlada reanuda el cursor. No convertir en bucle
+enero–noviembre ni aumentar límites sin medir impacto.
+
+**Estado agregado de 2026 (solo lectura piloto):**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_backfill_status --through 2026-11-12
+```
+
+NOT_STARTED / IN_PROGRESS / SCAN_EXHAUSTED_NOT_CERTIFIED nunca
+equivalen a cobertura certificada de la fuente. Todavía faltan conteos
+cruzados por mes, cambios históricos, códigos ambiguos y operaciones
+de origen anterior a 2026 pagadas durante 2026. Los valores anuales
+de gerencia se mantienen PRELIMINARES hasta cerrar esos controles.
