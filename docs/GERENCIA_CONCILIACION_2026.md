@@ -216,3 +216,38 @@ sobre el piloto y hace pausas; al terminar el cursor se comprueba
 el total de origen. **No** usar `--source ALL --apply` hasta terminar
 la revisión de índices de Chile para cada mes. No hay bucle de enero
 a noviembre ni tareas recurrentes.
+
+
+## Verificación paginada Chile sin COUNT(*) sin índice
+
+El comando `scripts.pilot_chile_count_scan` usa SELECT de **solo claves
+primarias** con FORCE INDEX (PRIMARY), filtros por fecha/tipo de enero y
+cursores keyset propios. No modifica fuente, ni reimporta registros.
+El checkpoint de conteo vive únicamente en `pilot_chile_count_progress`.
+Cada página se ejecuta en transacción READ ONLY y se revisa con EXPLAIN.
+Si el plan no pasa los límites, se detiene sin ejecutar la lectura.
+No supone una fotografía temporal consistente entre sesiones y no
+demuestra completitud histórica de actualizaciones tardías.
+
+**Primero prueba de una página sin escrituras:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+ python -m scripts.pilot_chile_count_scan \
+ --dataset payment --month 2026-01 --limit 20
+```
+
+Tras revisar índice y tiempo, autorizar explícitamente la persistencia
+del checkpoint de conteo aislado (no datos nuevos en producción):
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+ python -m scripts.pilot_chile_count_scan \
+ --dataset payment --month 2026-01 --pages 10 \
+ --apply --acknowledge-sensitive-data
+```
+
+Repetir hasta `COUNT_MATCH_NOT_CERTIFIED` o detener ante discrepancia.
+Luego repetir para remittance, primero con el diagnóstico sin --apply.
+Solo se comprueban conteos, no igualdad de claves; no equivale a
+cobertura certificada ni sustituye auditoría de integridad.
