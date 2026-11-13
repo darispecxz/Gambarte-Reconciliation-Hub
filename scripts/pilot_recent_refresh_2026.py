@@ -44,7 +44,7 @@ INSERT_PROGRESS = text("""
 INSERT INTO pilot_recent_refresh_progress
 (source,dataset,as_of_date,lookback_days,last_id,last_op,last_code,last_dest,
  rows_seen,pages_seen,scan_exhausted,changed_at)
-VALUES (:source,:dataset,:as_of_date,:lookback_days,0,0,0,0,0,0,0,0,UTC_TIMESTAMP())
+VALUES (:source,:dataset,:as_of_date,:lookback_days,0,0,0,0,0,0,0,UTC_TIMESTAMP())
 """)
 ADVANCE_PROGRESS = text("""
 UPDATE pilot_recent_refresh_progress
