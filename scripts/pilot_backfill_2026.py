@@ -137,7 +137,7 @@ def source_plan_guard(plan):
             estimate = raw_rows
         else:
             matched = re.fullmatch(
-                r"\\s*(\\d+)(?:\\s+\\(\\d+(?:\\.\\d+)?%\\))?\\s*",
+                r"\s*(\d+)(?:\s+\(\d+(?:\.\d+)?%\))?\s*",
                 str(raw_rows) if raw_rows is not None else "",
             )
             if not matched:
