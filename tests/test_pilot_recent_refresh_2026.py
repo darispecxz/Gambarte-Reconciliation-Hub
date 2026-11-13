@@ -48,3 +48,14 @@ def test_explicit_consent_required():
     with pytest.raises(ValueError,match="acknowledge"):
         validate(settings(),date(2026,11,13),7,30,2,True,False)
     validate(settings(),date(2026,11,13),7,30,2,True,True)
+
+
+def test_checkpoint_insert_has_one_value_per_column():
+    # Regression for MariaDB 1136: column count must match VALUES count.
+    from scripts.pilot_recent_refresh_2026 import INSERT_PROGRESS
+    import re
+    statement = str(INSERT_PROGRESS)
+    columns = re.search(r"INSERT INTO pilot_recent_refresh_progress\\s*\\((.*?)\\)\\s*VALUES", statement, re.S)
+    values = re.search(r"VALUES\\s*\\((.*?)\\)\\s*$", statement, re.S)
+    assert columns is not None and values is not None
+    assert len(columns.group(1).split(",")) == len(values.group(1).split(","))
