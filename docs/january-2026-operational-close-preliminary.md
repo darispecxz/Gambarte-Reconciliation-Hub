@@ -9,7 +9,8 @@ Informe generado el 13 de noviembre de 2026 utilizando **archivos de conciliaci�
 | Enero con pago antes del cierre | 2.833 |
 | Diciembre con pago en enero | 20 |
 | Enero con pago posterior al cierre | 53 |
-| `CLOSED_STATUS_REVIEW`, sin pago identificado | 11 |
+| Anuladas (`CANCELLED` en piloto; códigos negativos) | 8 |
+| Devueltas (`RETURNED` en piloto; códigos positivos) | 3 |
 | **Total** | **2.917** |
 
 **Total con pago durante enero:** 2.853 (2.833 + 20). No sumar las 53 operaciones pagadas en febrero a los pagos del período enero.
@@ -34,7 +35,7 @@ De los 306: 284 pagados en enero desde enero, 14 emitidos en diciembre y pagados
 
 - El rango operativo de **±10 CLP inclusive** fue confirmado por GAMBARTE; esta tolerancia no modifica campos originales ni prueba entrega, liquidación o saldo físico.
 - Los 2.600 casos de igualdad nominal no tienen aún verificación individual de los importes del sistema original equivalente a los 306 FX; **no confundir igualdad nominal con certificación**.
-- Los 11 `CLOSED_STATUS_REVIEW` están exclusivamente en Chile→Bolivia. No calificarlos como pagos faltantes/dinero debido sin confirmar su estado.
+- Los 11 `CLOSED_STATUS_REVIEW` estaban exclusivamente en Chile→Bolivia, pero el resumen consolidado perdió una clasificación previamente disponible: 8 `CANCELLED` (códigos negativos) y 3 `RETURNED` (positivos). El origen de la verificación son `detalle_conciliacion_enero_2026.csv`, `conciliacion_bidireccional_enero_2026.csv` y `conciliacion_enero_con_pagos_febrero.csv` con coincidencia de ID piloto origen. No son 11 pagos pendientes; su estado cerrado tampoco demuestra reintegro efectivamente ejecutado.
 - La fecha de modificación de remesa no reconstruye un estado histórico as-of si hubo modificaciones posteriores.
 - El informe no investiga fuentes de auditoría ajenas a remesa y pago.
 
@@ -46,3 +47,14 @@ De los 306: 284 pagados en enero desde enero, 14 emitidos en diciembre y pagados
 - `private-reports/conciliacion_monetaria_306_enero_2026.csv`: contraste indexado del total CLP, fórmula, tasa, evidencia de importe.
 
 Las rutas anteriores son archivos privados **no incorporados al repositorio**. La versión de consulta HTML/CSV debe conservarse dentro del almacenamiento privado para reportes.
+
+## Rectificación de estados del cierre (noviembre de 2026)
+
+Las remesas CL_TO_BO identificadas mediante los registros originales del piloto son:
+
+| Estado | Códigos |
+|---|---|
+| `CANCELLED` | -3946978, -4389715, -4766568, -6113512, -6782133, -7794111, -9079751, -9483331 |
+| `RETURNED` | 2481233, 2693535, 3673787 |
+
+Con esto, la clasificación operativa es **2.853 pagos en enero, 53 posteriores, 8 anuladas y 3 devueltas**. El indicador `SIN_PAGO_IDENTIFICADO_REVISAR_ESTADO`/`CASO_PENDIENTE_DE_REVISION` del resumen anterior era una pérdida de información y queda sustituido. Esto no certifica el flujo de devolución del dinero.
