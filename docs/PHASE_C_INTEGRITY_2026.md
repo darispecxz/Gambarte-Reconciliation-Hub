@@ -91,3 +91,37 @@ antes de cualquier certificación.
 Los códigos ambiguos (como los dos pagos bajo un código) y la modalidad
 incompatible se mantienen en los reportes existentes; no se modifican ni se
 declaran duplicados fraudulentos automáticamente.
+
+
+## Regla operacional confirmada: devoluciones en Bolivia
+
+Operaciones confirmó que **un valor no vacío de `pago.motivo` en Bolivia
+identifica un pago de devolución local**, no un desembolso en destino.
+Ejemplos: códigos `27691` y `43023`, ambos `id_operacion=4`.
+No publicar los motivos completos, que contienen texto privado.
+
+El extractor SELECT de Bolivia/pago ahora recoge
+`p.motivo AS return_reason` en la evidencia `source_records.payload`.
+La auditoría inversa los clasifica como
+`RETURNED_LOCALLY_IN_BOLIVIA` con prioridad sobre
+`NO_ORIGIN_IN_PILOT`. No se elimina ningún registro ni se modifica el
+estado original de la remesa. Las devoluciones se muestran como categoría
+independiente, no como pagos cruzados a Bolivia.
+
+**Importante:** registros previamente importados no tienen esta columna en
+el payload. Para capturar los dos casos confirmados, refrescarlos por código
+en el piloto con el módulo ya validado, después de reconstruir la imagen:
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_refresh_payment_code --code 27691
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_refresh_payment_code --code 43023
+```
+
+Si el resultado de cada consulta es seguro y único, la variante
+`--apply --acknowledge-sensitive-data` actualiza **solo el piloto**.
+Después, generar nuevamente los reportes de Fase C. No supone que otros
+pagos antiguos sin `return_reason` sean pagos normales: el dato aún no fue
+capturado en ellos y requiere actualización antes de auditar masivamente
+las devoluciones.
