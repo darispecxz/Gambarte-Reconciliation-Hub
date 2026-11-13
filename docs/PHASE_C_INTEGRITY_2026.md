@@ -170,3 +170,24 @@ resueltos hasta que el log de simulación y el nuevo informe lo demuestren.
 **Limitación:** el origen puede cambiar entre la simulación y la aplicación;
 la ejecución con `--apply` vuelve a consultar, validar y verificar los
 registros, sin usar ciegamente la evidencia anterior.
+
+
+## Revisión de duplicados y modalidades con evidencia
+
+`scripts/pilot_phase_c_case_evidence.py` implementa reglas puras para
+clasificar **posibles** duplicaciones de registro y diferencias de modalidad.
+No se conecta a bases, no cambia estados, ni modifica el catálogo de modalidades.
+
+- Dos pagos de Bolivia con el mismo código, importe, moneda, comprobante,
+  agencia, usuario, operación y comisión, creados en <=60 segundos, dan
+  `SUSPECTED_DUPLICATE_RECORD_MANUAL_REVIEW`. Esto NO confirma doble
+  liquidación. Operaciones/Contabilidad debe verificar el efecto en saldos,
+  asientos, kardex y comprobantes antes de autorizar cualquier reversión.
+- Igual código, importe y moneda, pero distinto tipo de pago respecto al
+  contrato de modalidades: `REVIEW_MODALITY_MISMATCH_SAME_CURRENCY_AMOUNT`.
+  Solo Operaciones puede confirmar un canal excepcional antes de ampliar
+  `DESTINATION_PAYMENT_TYPES`.
+- Nunca publicar datos de identidad, documentos o teléfonos procedentes de
+  estas verificaciones; las pruebas usan referencias sintéticas.
+- Las cinco observaciones permanecen en su estado de revisión hasta
+  validación humana. No borrar uno de los pagos ni automatizar decisiones.
