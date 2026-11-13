@@ -3,7 +3,7 @@ from datetime import date,datetime
 from types import SimpleNamespace
 
 from scripts.pilot_phase_c_integrity_2026 import (
-    inverse_payments,monthly_coverage,payment_assessment,source_pair_count,
+    inverse_payments,monthly_coverage,payment_assessment,source_pair_count,is_bolivia_return,
 )
 
 
@@ -68,3 +68,33 @@ def test_missing_historical_checkpoint_has_explicit_status():
     result=monthly_coverage([],[],{},[],date(2026,1,2))
     assert len(result)==4
     assert all(x["assessment"]=="HISTORICAL_CHECKPOINT_MISSING" for x in result)
+
+
+def test_bolivia_return_with_motive_is_not_orphan_payment():
+    payment=row("BOLIVIA","27691",4,"2026-05-16 19:04:17")
+    payment.payload={"return_reason":"DEVOLUCION POR IMPOSIBILIDAD DE DEPOSITO"}
+    assert is_bolivia_return(payment)
+    records=inverse_payments([], [payment],date(2026,11,13))
+    assert len(records)==1
+    assert records[0]["assessment"]=="RETURNED_LOCALLY_IN_BOLIVIA"
+    assert records[0]["return_reason_present"]=="True"
+    assert "DEVOLUCION POR IMPOSIBILIDAD" not in str(records)
+
+
+def test_bolivia_return_requires_nonblank_motive():
+    payment=row("BOLIVIA","43023",4,"2026-10-17 14:42:45")
+    payment.payload={"return_reason":"  "}
+    assert not is_bolivia_return(payment)
+    assert inverse_payments([], [payment],date(2026,11,13))[0]["assessment"]=="NO_ORIGIN_IN_PILOT"
+
+
+def test_missing_historical_motive_is_not_definitive_normal_payment():
+    payment=row("BOLIVIA","43023",4,"2026-10-17 14:42:45")
+    assert not is_bolivia_return(payment)
+    assert inverse_payments([], [payment],date(2026,11,13))[0]["return_reason_present"]=="False"
+
+
+def test_motive_from_chile_does_not_define_bolivia_return():
+    payment=row("CHILE","300",3,"2026-10-17 14:42:45")
+    payment.payload={"return_reason":"LOCAL"}
+    assert not is_bolivia_return(payment)
