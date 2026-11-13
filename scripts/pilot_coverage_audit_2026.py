@@ -47,7 +47,7 @@ def build_rows(checkpoints, projections, missing_dates, through_month):
             key = (source, dataset, month)
             cp = checkpoints.get(key)
             stats = projections.get(key, {})
-            projected = int(stats.get("rows", 0))
+            projected = int(stats.get("row_count", 0))
             empty_codes = int(stats.get("missing_code", 0))
             scanned = int(cp["rows_seen"]) if cp else None
             difference = projected - scanned if scanned is not None else None
@@ -110,7 +110,7 @@ def collect(through_month):
                     # Fixed table identifiers, never derived from CLI input.
                     monthly = conn.execute(text(f"""
                         SELECT source, DATE_FORMAT(occurred_at, '%Y-%m') AS month_key,
-                               COUNT(*) AS rows,
+                               COUNT(*) AS row_count,
                                SUM(CASE WHEN code IS NULL OR TRIM(code) = ''
                                         THEN 1 ELSE 0 END) AS missing_code
                         FROM {table}
@@ -122,13 +122,13 @@ def collect(through_month):
                     for r in monthly:
                         projections[(r["source"], dataset, r["month_key"])] = dict(r)
                     undated = conn.execute(text(f"""
-                        SELECT source, COUNT(*) AS rows
+                        SELECT source, COUNT(*) AS row_count
                         FROM {table}
                         WHERE occurred_at IS NULL
                         GROUP BY source
                     """)).mappings().all()
                     for r in undated:
-                        missing_dates[(r["source"], dataset)] = int(r["rows"])
+                        missing_dates[(r["source"], dataset)] = int(r["row_count"])
                 return build_rows(checkpoints, projections, missing_dates, through_month)
             finally:
                 conn.rollback()
