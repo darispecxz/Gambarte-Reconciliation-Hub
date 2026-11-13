@@ -98,7 +98,7 @@ def analyze(rows):
         raise ValueError("No same-currency candidates in input")
     keys_origin=Counter((r["direction"],r["origin_key"]) for r in candidates)
     keys_payment=Counter((r["direction"],r["payment_key"]) for r in candidates)
-    codes=Counter((r["direction"],r["code"]) for r in rows)
+    codes=Counter((r["Dirección"],r["Código"]) for r in rows)
     for r in candidates:
         warnings=[]
         if codes[(r["direction"],r["code"])]>1:
