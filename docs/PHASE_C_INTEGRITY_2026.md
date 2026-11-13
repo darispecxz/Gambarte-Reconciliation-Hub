@@ -61,3 +61,33 @@ Primera ejecución crea cuatro archivos privados:
 
 No subir los CSV privados al repositorio, enviarlos por correo o compartir
 sus códigos e importes públicamente.
+
+
+## Investigación dirigida de pagos sin remesa en piloto
+
+El siguiente comando consulta **únicamente los códigos** clasificados actualmente
+como `NO_ORIGIN_IN_PILOT` (máximo 25 códigos distintos). Cada consulta en
+Bolivia/Chile pasa por `START TRANSACTION READ ONLY` y `EXPLAIN`, con
+máximo 50 filas por código. Solo exporta evidencia al directorio privado;
+**no incorpora remesas automáticamente ni modifica producción/piloto**.
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  -v "$(pwd -W)/private-reports:/export" pilot-import \
+  python -m scripts.pilot_phase_c_source_lookup_2026 \
+  --through 2026-11-13 \
+  --output /export/fase_c_busqueda_origen_2026.csv \
+  --max-codes 25
+```
+
+Los resultados `ORIGIN_FOUND_IN_SOURCE` indican solamente que el código fue
+localizado; usar `origin_rows_2025`, `origin_rows_2026` y
+`origin_types_found` para investigar. Si un plan es rechazado, se informa
+`LOOKUP_BLOCKED_OR_INCONCLUSIVE`, nunca «no existe». Los resultados
+`NO_ORIGIN_FOUND_BY_CODE` tampoco demuestran ausencia definitiva. El
+emparejamiento requiere validar modalidad, titularidad, fechas, pago y FX
+antes de cualquier certificación.
+
+Los códigos ambiguos (como los dos pagos bajo un código) y la modalidad
+incompatible se mantienen en los reportes existentes; no se modifican ni se
+declaran duplicados fraudulentos automáticamente.
