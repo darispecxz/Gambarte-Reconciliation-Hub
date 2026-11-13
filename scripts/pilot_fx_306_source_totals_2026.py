@@ -23,6 +23,7 @@ REQUIRED={"Dirección","Cohorte","Estado al corte","Código","País origen","Pa�
  "Moneda origen","Moneda pago","Importe origen","Importe pago","Clave origen",
  "Clave pago","Clasificación monetaria","Fecha pago"}
 PAIRS={("BOB","CLP"):254,("BOB","USD"):25,("USD","CLP"):27}
+CLP_TOLERANCE=Decimal("10")  # Operational threshold supplied by GAMBARTE
 COHORTS={"JANUARY_ORIGIN","DECEMBER_ORIGIN_JANUARY_PAYMENT"}
 STATUSES={"PAID_BY_CUTOFF","PAID_AFTER_CUTOFF","DECEMBER_ORIGIN_PAID_IN_JANUARY"}
 FIELDS=(
@@ -40,6 +41,7 @@ FIELDS=(
  ("amount_identity","Control importes originales"),
  ("rate_match","Comparación numérica tasas"),
  ("formula_result","Control fórmula"),("total_result","Control total CLP"),
+ ("tolerance_result","Control tolerancia ±10 CLP"),
  ("origin_explain","EXPLAIN Bolivia"),("payment_explain","EXPLAIN Chile"),
  ("certification","Certificación financiera"),
 )
@@ -132,9 +134,13 @@ def evidence(r,origin,payment,ok,pk,oplan,pplan):
         "MATCH_STORED_PAGO_TOTAL" if b==calculated else "FORMULA_DIFF_REVIEW")
     total=("NOT_AVAILABLE" if a is None or b is None else
         "MATCH_ORIGIN_TOTAL_CLP" if a==b else "TOTAL_CLP_DIFFERENCE_REVIEW")
+    tolerance=("NOT_AVAILABLE" if a is None or b is None else
+        "EXACT_MATCH" if a==b else
+        "WITHIN_CLP_TOLERANCE" if abs(a-b)<=CLP_TOLERANCE else "OUTSIDE_CLP_TOLERANCE")
     raw_payment_date=str(payment["fec_crea_pago"]) if payment["fec_crea_pago"] is not None else ""
     if str(payment["mon_rec"])!=("2" if r["Moneda pago"]=="CLP" else "1"):
         total="CURRENCY_CODE_REVIEW"
+        tolerance="CURRENCY_CODE_REVIEW"
     return dict(code=r["Código"],pair=r["Moneda origen"]+" → "+r["Moneda pago"],
         cohort=r["Cohorte"],cutoff=r["Estado al corte"],
         payment_date_pilot=r["Fecha pago"],payment_date_source=raw_payment_date,
@@ -149,7 +155,7 @@ def evidence(r,origin,payment,ok,pk,oplan,pplan):
         diff_payment_vs_formula=str(b-calculated) if b is not None and calculated is not None else "",
         amount_identity=identity_check,
         rate_match="YES_NUMERIC_ONLY" if tc1 is not None and tc2 is not None and tc1==tc2 else "NO_OR_MISSING",
-        formula_result=formula,total_result=total,
+        formula_result=formula,total_result=total,tolerance_result=tolerance,
         origin_explain=oplan,payment_explain=pplan,certification="NOT_CERTIFIED")
 
 def html_document(rows):
@@ -168,7 +174,8 @@ td,th{padding:9px;border-bottom:1px solid #d9e3ef;text-align:left}th{background:
 <aside><b>NO CERTIFICA ENTREGA NI LIQUIDACIÓN.</b> Los campos cotejados representan
 totales registrados; no prueban que el efectivo haya sido entregado.
 Los pagos después del cierre se mantienen identificados por separado.
-Los horarios entre sistemas no se normalizan en este informe.</aside>
+Tolerancia operativa acordada: ±10 CLP, inclusive; coincidencia dentro de tolerancia
+no demuestra entrega ni autoriza certificación. Los horarios entre sistemas no se normalizan en este informe.</aside>
 <input id="q" placeholder="Buscar código"><select id="route"><option value="">Todas las rutas</option></select>
 <select id="status"><option value="">Todos los resultados</option></select>
 <p id="count"></p><div class="wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
@@ -216,7 +223,7 @@ def run(input_csv,output):
         for item in rows:
             w.writerow([safe_csv_value(item.get(key,"")) for key,_ in FIELDS])
     print("source_read_only=True source_queries=612 indexed=True source_writes=False financially_certified=False")
-    for field in ("total_result","formula_result","amount_identity","rate_match","cutoff"):
+    for field in ("total_result","tolerance_result","formula_result","amount_identity","rate_match","cutoff"):
         for k,n in sorted(Counter(r[field] for r in rows).items()):
             print(f"{field}={k} count={n}")
     print(f"files_created={dst.name},{out_csv.name} rows={len(rows)}")
