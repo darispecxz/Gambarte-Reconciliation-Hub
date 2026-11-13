@@ -24,7 +24,8 @@ from scripts.pilot_reconcile import DIRECTIONS
 PAYMENT_FIELDS = ("direction","payment_source","payment_code","payment_record_id",
                   "payment_type","payment_date","payment_amount","payment_currency",
                   "assessment","origin_candidates","compatible_origin_candidates",
-                  "same_code_payment_candidates","return_reason_present","coverage_certified")
+                  "same_code_payment_candidates","return_reason_present",
+                  "manual_review_decision","manual_review_event_id","coverage_certified")
 COVERAGE_FIELDS = ("month","source","dataset","pilot_records","missing_code",
                    "missing_date_total_for_pair","historical_rows_seen",
                    "historical_scan_exhausted","recent_scans_finished",
@@ -215,6 +216,12 @@ def collect(through):
                     """),{"through":through.strftime("%Y-%m")}).mappings().all()
                     historical={(r["source"],r["dataset"],r["month_key"]):dict(r)
                                 for r in cps}
+                reviews=[]
+                if table_present(conn,"pilot_phase_c_review_events"):
+                    reviews=conn.execute(text("""
+                        SELECT id,direction,code,payment_source,payment_record_id,decision
+                        FROM pilot_phase_c_review_events ORDER BY id
+                    """)).mappings().all()
                 recent=[]
                 if table_present(conn,"pilot_recent_refresh_progress"):
                     cps=conn.execute(text("""
@@ -232,6 +239,18 @@ def collect(through):
     finally:
         engine.dispose()
     inverse=inverse_payments(remittances,payments,through)
+    # Preserve the automatic assessment, show latest review separately.
+    latest={}
+    for event in reviews:
+        key=(event["direction"],str(event["code"]),
+             event["payment_source"],int(event["payment_record_id"]))
+        latest[key]=event
+    for item in inverse:
+        key=(item["direction"],str(item["payment_code"]),
+             item["payment_source"],int(item["payment_record_id"]))
+        event=latest.get(key)
+        item["manual_review_decision"]=event["decision"] if event else ""
+        item["manual_review_event_id"]=event["id"] if event else ""
     coverage=monthly_coverage(remittances,payments,historical,recent,through)
     counts=source_pair_count(remittances,payments,through)
     for row in coverage:
