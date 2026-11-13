@@ -7,6 +7,7 @@ certify source coverage. No automatic workers or recurring scheduling.
 """
 import argparse
 from datetime import date, datetime
+import re
 from time import perf_counter
 
 from sqlalchemy import create_engine, text
@@ -128,7 +129,20 @@ def source_plan_guard(plan):
     for row in plan:
         access = str(row.get("type") or "")
         key = row.get("key")
-        estimate = int(row.get("rows") or 0)
+        # Some MariaDB EXPLAIN variants encode an estimated row count as
+        # '430 (11%)'. Only accept a plain non-negative integer with an
+        # optional percentage; reject anything else rather than bypass safety.
+        raw_rows = row.get("rows")
+        if isinstance(raw_rows, int) and not isinstance(raw_rows, bool):
+            estimate = raw_rows
+        else:
+            matched = re.fullmatch(
+                r"\\s*(\\d+)(?:\\s+\\(\\d+(?:\\.\\d+)?%\\))?\\s*",
+                str(raw_rows) if raw_rows is not None else "",
+            )
+            if not matched:
+                raise RuntimeError("Backfill refused: unexpected EXPLAIN rows estimate")
+            estimate = int(matched.group(1))
         extra = str(row.get("Extra") or "")
         if not key or access in {"ALL", "index"}:
             raise RuntimeError("Backfill refused: unindexed source plan")
