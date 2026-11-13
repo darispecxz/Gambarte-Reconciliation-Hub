@@ -191,3 +191,33 @@ No se conecta a bases, no cambia estados, ni modifica el catálogo de modalidade
   estas verificaciones; las pruebas usan referencias sintéticas.
 - Las cinco observaciones permanecen en su estado de revisión hasta
   validación humana. No borrar uno de los pagos ni automatizar decisiones.
+
+
+## Hallazgos operativos confirmados — noviembre de 2026
+
+- **Código 2101877**: Operaciones confirmó que los dos registros de pago
+  (`id_pago=454900` y `id_pago=454901`) son un **duplicado de registro
+  causado por problemas de conexión a Internet**; comparten código,
+  comprobante, importe, agencia y otros atributos, con 16 segundos de
+  diferencia. Clasificar la incidencia como
+  `CONFIRMED_DUPLICATE_RECORD_CONNECTIVITY` en la revisión operativa.
+  **No inferir doble desembolso o doble débito de caja** sin comparar
+  libro mayor, movimientos de caja, saldo y evidencia de desembolso.
+  No eliminar registros ni ejecutar reversas desde la conciliación.
+  Requiere revisión humana de impacto contable y una corrección aprobada
+  en el sistema responsable si corresponde.
+
+- **Código 7737958**: el pago en ventanilla (`id_operacion=4`) de Bolivia
+  corresponde por código e importe a remesa de depósito bancario
+  (`id_operacion=5`) originada en Chile. Operaciones indica que
+  **parece ser una excepción operativa**. Mantener la categoría
+  `REVIEW_EXCEPTIONAL_PAYMENT_CHANNEL` hasta obtener confirmación del
+  canal autorizado para ese caso. No cambiar globalmente la regla que
+  vincula Chile/5 con Bolivia/7 a partir de un único caso.
+
+Estos hallazgos son **decisiones/documentación de revisión humana** y
+no alteran automáticamente `pilot_phase_c_integrity_2026.py`,
+`DESTINATION_PAYMENT_TYPES`, pagos, remesas, saldos ni asientos.
+El reporte automatizado seguirá señalando ambas observaciones hasta
+implementar una bitácora de resoluciones aprobadas y auditables en el
+piloto. La cobertura externa sigue `coverage_certified=False`.
