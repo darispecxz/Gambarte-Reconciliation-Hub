@@ -3,19 +3,32 @@ x-app: &app
   env_file: .env
   restart: unless-stopped
   depends_on:
-    mariadb:
-      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+
 services:
+  migrate:
+    build: .
+    env_file: .env
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
   api:
     <<: *app
-    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["127.0.0.1:8000:8000"]
+
   etl:
     <<: *app
-    command: ["python","-m","app.workers.sync"]
+    command: ["python", "-m", "app.workers.sync"]
+
   reconciler:
     <<: *app
-    command: ["python","-m","app.workers.reconcile"]
+    command: ["python", "-m", "app.workers.reconcile"]
+
   mariadb:
     image: mariadb:11.4
     restart: unless-stopped
@@ -26,9 +39,10 @@ services:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
     volumes: ["mariadb_data:/var/lib/mysql"]
     healthcheck:
-      test: ["CMD","healthcheck.sh","--connect","--innodb_initialized"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 10
+    # Intentionally NO public database port.
 volumes:
   mariadb_data:

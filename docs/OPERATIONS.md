@@ -1,23 +1,278 @@
-# Operación y despliegue (entorno de pruebas)
+# Operación y seguridad — Etapa B
 
-## Arranque
-1. `cp .env.example .env`.
-2. Cambiar **API_KEY**, DB_PASSWORD y MARIADB_ROOT_PASSWORD por valores aleatorios robustos.
-3. `docker compose up -d --build`.
-4. `docker compose run --rm api alembic upgrade head`.
-5. `curl http://127.0.0.1:8000/api/v1/health`.
-6. `curl -H "X-API-Key: <clave>" http://127.0.0.1:8000/api/v1/sync/status`.
-7. `docker compose run --rm api pytest -q`.
+## Instalación de pruebas
+```bash
+cp .env.example .env
+# Cambiar API_KEY, DB_PASSWORD y MARIADB_ROOT_PASSWORD
+docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8000/api/v1/health
+docker compose run --rm api python -m pytest -q
+```
 
-## Antes de fuentes reales
-- Obtener únicamente usuarios SQL de lectura.
-- Confirmar disponibilidad y TLS/VPN; no exponer puertos 3306 a internet.
-- Probar consultas con LIMIT en copias de datos o entornos de prueba.
-- Validar índices, claves, fechas y tipos de operación.
-- Revisar privilegios de los contenedores y preservar MariaDB mediante backups probados.
-- Configurar `ENVIRONMENT=production` para deshabilitar docs públicos; TLS a través de proxy.
-- Monitorizar `sync_runs` y errores.
-- No considerar hallazgos preliminares equivalentes a cierres o saldos financieros.
+El servicio `migrate` aplica `alembic upgrade head` automáticamente antes de iniciar `api`, `etl` y `reconciler`.
 
-## Recuperación
-Revisar `docker compose logs etl reconciler`; no eliminar `source_versions`. La ingesta utiliza clave (origen, dataset, id) y hash para evitar duplicados por relectura. Para recargas históricas, añadir rangos configurables sin sobreescribir el historial.
+**Migración 0004**: valida que no existan remesas Chile importadas con
+la identidad vieja `op:id_remesa`. Si existen, fallará intencionalmente:
+realizar copia de seguridad y plan de reindexación, sin borrar datos
+ni forzar la migración. Los campos de cursor Chile cambian a
+`op,codigo,id_destino`; reanudar una posición antigua no es seguro.
+
+El ETL no se habilita automáticamente: `ENABLE_SOURCE_ETL=false` y `SOURCE_MAPPING_VERIFIED=false`. Primero revisar `SOURCE_MAPPING.md`.
+
+## Acceso
+API requiere cabecera `X-API-Key` excepto `/health`. No exponer directamente a internet sin reverse proxy HTTPS, segmentación de red, credenciales rotadas y control de acceso. En `ENVIRONMENT=production` se deshabilita OpenAPI público.
+
+## Operación
+- `docker compose logs -f etl reconciler`
+- `docker compose logs migrate`
+- `GET /api/v1/sync/status`: últimas ejecuciones.
+- `GET /api/v1/sync/cursors`: última cobertura, avance y si existe una ventana inacabada.
+- `POST /api/v1/reconciliations`: encola ejecución, devuelve ID.
+- `POST /api/v1/reconciliations?cutoff_at=2026-10-31T23:59:59`: corte histórico conservador con fecha local; no se reconstruyen estados históricos del legado.
+- `GET /api/v1/reconciliations/{id}/matches`: evidencias por operación.
+- Un proceso de ingesta fallido deja el cursor en progreso; el siguiente intenta continuar desde la última página confirmada.
+
+## Preproducción
+- Validar con pruebas sintéticas la cadena de migraciones 0001→0002→0003→0004 y reinstalación desde cero.
+- Preferir cuentas SQL SELECT-only en Bolivia y Chile, nunca root. Si el hosting no permite crear otro usuario, se habilitó una defensa adicional por sesión: cada consulta de origen se ejecuta dentro de `START TRANSACTION READ ONLY` y siempre se hace `ROLLBACK`; esto **no reemplaza** permisos SELECT a nivel servidor ni impide que las credenciales reutilizadas se empleen desde otro programa.
+- Proteger secretos mediante variables/secret manager del servidor, y no comitear `.env`.
+- Mantener DB central en red interna Docker; volumen persistente, respaldos cifrados, pruebas de restauración.
+- Ejecución en una sola instancia por worker hasta implementar leases.
+- Configurar `MAX_SOURCE_AGE_MINUTES` acorde a frecuencia del ETL; fuente fallida bloquea la conciliación.
+- La API no genera balances financieros, no modifica remesas originales y no aprueba liquidaciones.
+
+## Diagnóstico
+Si una solicitud queda `BLOCKED`, revisar `/sync/status` y `/sync/cursors`. No interpretar `MISSING_DESTINATION` fuera de la cobertura registrada. Correr backfill histórico después de validar fechas y claves.
+
+## Pruebas dentro de Docker
+Tras cambiar Dockerfile o pyproject, reconstruir la imagen en lugar de usar la anterior:
+
+```bash
+docker compose build --no-cache api
+docker compose run --rm api python -m pytest -q
+```
+
+El Dockerfile copia el código antes de ejecutar `pip install .[dev]`. `PYTHONPATH=/service` permite localizar `app` desde el ejecutable pytest y `cache_dir=/tmp/gambarte-pytest-cache` evita escribir archivos de cache en la carpeta `/service` que pertenece a root. El contenedor se sigue ejecutando con UID 10001, no con root.
+
+## Validación cruzada de pagos tardíos (solo lectura)
+
+Antes de activar los workers ETL se puede ejecutar desde el contenedor
+`api` un **muestreo limitado** por fecha de pago:
+
+```bash
+docker compose run --rm api python -m scripts.audit_payment_age --days 7 --sample 150
+```
+
+- BO→CL: pagos de Chile `pago` 3/5/6/8 con operaciones de origen
+  Bolivia `remesa` 4/16 mediante `codigo`.
+- CL→BO: pagos de Bolivia `pago` 4/7 con origen
+  Chile `tmp_reporte_remesa` 3/5/6/8 mediante `codigo`.
+- Selecciona como máximo 150 pagos recientes **por dirección**, consulta
+  códigos en bloques de 20 y solo muestra contadores agregados.
+- Si `sample_is_capped=True`, el resultado es una muestra truncada y
+  no se debe extrapolar como porcentaje del período completo.
+- Imprime pagos con origen de más de 30 días, 7–30 días, <=7 días,
+  códigos ambiguos, sin origen dentro de tipos seleccionados, o fechas
+  inconsistentes. Una ausencia de origen **no prueba un error**:
+  puede haber modalidades distintas, códigos no globalmente únicos
+  o registros cancelados/reconstruidos.
+- Las fechas entre bases pueden tener zonas horarias diferentes:
+  valores cercanos al límite deben revisarse antes de atribuir días exactos.
+- Abre transacciones `START TRANSACTION READ ONLY` en ambas fuentes,
+  termina con ROLLBACK y cierra las conexiones, sin activar el ETL.
+- Si encuentra demasiadas filas por código, detiene el proceso en vez
+  de clasificar registros incompletos.
+- No certifica saldos, importes, ausencia de pagos ni integridad total.
+  No garantiza estabilidad de dos bases remotas durante la muestra.
+- Ejecutarlo fuera de las horas pico: la búsqueda de origen por `codigo`
+  puede requerir escaneos si no existen índices adecuados. Revisar
+  `EXPLAIN` y permisos SELECT-only antes de ampliar el volumen.
+
+**No activar** `ENABLE_SOURCE_ETL` ni `SOURCE_MAPPING_VERIFIED`
+hasta revisar estos resultados y la cobertura del backfill/solapamiento.
+
+## Desglose de antigüedad para dimensionar el backfill
+
+La muestra reciente del 2026-11-12 y la decisión de no ejecutar la
+consulta costosa de Chile remesas constan en `RECENT_AUDIT.md`.
+
+El mismo diagnóstico imprime bandas adicionales `paid_between_30_and_60_days_after_origin`,
+`paid_between_60_and_90_days_after_origin`,
+`paid_more_than_90_days_after_origin` y `max_lag_days`
+(máximo observado **entre los pagos de más de 30 días** de la muestra).
+No se modifica ninguna fuente ni se revelan códigos.
+
+```bash
+git pull origin feat/operational-reconciliation-phase-b
+docker compose build api
+docker compose run --rm api python -m scripts.audit_payment_age --days 7 --sample 150
+```
+
+La muestra BO→CL de 101 pagos de la semana, fechada 2026-11-11,
+mostró 6 pagos cuyo origen superaba 30 días; CL→BO fue una muestra
+truncada de 150. **No decidir 90 días de backfill sin observar el
+desglose**. Una importación retrospectiva completa tampoco resuelve
+todos los casos futuros: pagos antiguos con origen fuera de la ventana
+necesitan recuperación específica y control de cobertura.
+
+## Preflight de extractores: una página, sin ETL ni persistencia
+
+Antes de permitir una importación limitada, ejecutar el diagnóstico que
+utiliza la **misma SQL de los cuatro extractores** (no SQL simplificada).
+No inicia el worker, no realiza `ingest()`, no escribe registros ni
+cursores centrales, solo usa `START TRANSACTION READ ONLY` y rollback.
+Rechaza la ejecución si `ENABLE_SOURCE_ETL` o
+`SOURCE_MAPPING_VERIFIED` son true.
+
+Primero inspeccionar solo el plan de Chile:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset remittance --days 60 --limit 50 --explain-only
+```
+
+Si el plan es razonable, ejecutar **una sola página**:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset remittance --days 60 --limit 50
+```
+
+Luego revisar de manera independiente los otros tres datasets:
+
+```bash
+docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset remittance --days 60 --limit 50 --explain-only
+docker compose run --rm api python -m scripts.preflight_source --source BOLIVIA --dataset payment --days 60 --limit 50 --explain-only
+docker compose run --rm api python -m scripts.preflight_source --source CHILE --dataset payment --days 60 --limit 50 --explain-only
+```
+
+Solo después de revisar los planes, retirar `--explain-only`
+individualmente. Usa un máximo de 100 filas por ejecución, 90 días
+de retrospectiva y transacciones de solo lectura. Muestra acceso,
+índice, filas estimadas, elapsed, total y estados agregados. No mostrar
+códigos, cantidades de dinero ni identidades de clientes. Los tiempos
+son medidas de una sola página, no un benchmark de todo el ETL.
+SQL de otros países/tipos aún podría tener columnas o índices
+incompatibles: este preflight debe exponer esos errores sin activar
+ingesta.
+
+## Cobertura por antigüedad al momento de importar
+
+`scripts.audit_payment_age` ahora distingue expresamente
+`max_lag_days` (diferencia *pago menos creación*) y
+`max_origin_age_days_at_audit` (*NOW() de la DB de origen menos
+creación*). La segunda determina si un backfill de 30/60/90 días
+incluiría los orígenes encontrados en la muestra. `sample_is_capped`
+advierte de truncamiento.
+
+Este muestreo no comprueba modificaciones históricas ni asegura
+que todos los documentos se puedan recuperar, y un backfill
+retrospectivo finito no reemplaza reconciliación de cobertura y
+resolución puntual segura de pagos tardíos.
+
+**Fase siguiente aún pendiente:** una importación explícita, de un
+solo dataset, a una DB central aislada y con límites de filas,
+sin worker automático. Debe esperar a que todos los preflight estén
+revisados y se haya validado la identidad/reglas de negocio.
+
+## Fase C: prueba de dos páginas y pilot aislado
+
+El plan y la primera página de los cuatro extractores fueron revisados
+(2026-11-12). Las tablas fuente tienen PRIMARY: BO remesa=id_remesa,
+BO pago=id_pago, CL pago=id_pago; CL tmp_reporte_remesa=
+(id_operacion,codigo,id_destino). Ejecutar el preflight de 2 páginas:
+
+```bash
+docker compose run --rm --no-deps api python -m scripts.preflight_source --source BOLIVIA --dataset remittance --days 60 --limit 50 --pages 2
+docker compose run --rm --no-deps api python -m scripts.preflight_source --source BOLIVIA --dataset payment --days 60 --limit 50 --pages 2
+docker compose run --rm --no-deps api python -m scripts.preflight_source --source CHILE --dataset payment --days 60 --limit 50 --pages 2
+```
+
+El modo de 2 páginas usa la misma transacción READ ONLY por dataset,
+valida progresión estricta del keyset y no escribe cursores ni datos.
+
+La importación piloto **NO usa la DB central habitual**, sino un servicio
+MariaDB local adicional `pilot-db`, sin puertos publicados, con volumen
+`pilot_mariadb_data` distinto de `mariadb_data`. El proyecto independiente
+`compose.pilot.yaml` configura `pilot-migrate` y `pilot-import`.
+Solo se arranca al invocarlo explícitamente con `--profile pilot`.
+La primera prueba se restringe a Bolivia remesas, 60 días y 50 filas,
+con respaldo de transacción source READ ONLY.
+Las vistas previas de Bolivia pagos, Chile pagos y Chile remesas están
+disponibles con `--source` y `--dataset`. Después de validar el primer
+lote de remesas, `--apply` se habilitó gradualmente para los otros tres
+datasets. Solo se permiten lotes manuales de hasta 50 registros por
+dataset hacia el piloto. Cada vista previa lee como máximo 50 filas,
+comprueba el marcador piloto en transacción `READ ONLY` y no importa datos.
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot build pilot-import pilot-migrate
+
+# Paso A: crea el esquema piloto si falta; no importa registros financieros
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50
+
+# Vistas previas adicionales
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_import --source BOLIVIA --dataset payment --days 60 --limit 50
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_import --source CHILE --dataset payment --days 60 --limit 50
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_import --source CHILE --dataset remittance --days 60 --limit 50
+
+# Paso B: solo tras revisar A; almacena datos REALES en pilot aislado
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Segundo dataset, siempre con lote máximo de 50 y autorización operativa
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --source BOLIVIA --dataset payment --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Tercer dataset, Chile pagos; fuente siempre READ ONLY
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --source CHILE --dataset payment --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Cuarto dataset, Chile remesas; identidad op:codigo:id_destino
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import python -m scripts.pilot_import --source CHILE --dataset remittance --days 60 --limit 50 --apply --acknowledge-sensitive-data
+
+# Paso C: repetir exactamente B. Debe mostrar pilot_rows_inserted_or_updated=0
+# si los 50 registros no cambiaron en las fuentes.
+
+# Auditoría agregada, solo lectura; repetir tras importar Bolivia remesas
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_audit
+
+# Prueba sintética de versionado; hace rollback y no conserva datos
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_version_probe
+
+# Candidatos agregados por codigo; solo lectura, sin MATCHED persistido
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_candidates
+
+# Clasificación provisional por estado y codigo; no persiste resultados
+docker compose -f compose.pilot.yaml --profile pilot run --rm --no-deps pilot-import python -m scripts.pilot_reconcile
+```
+
+El script verifica nombre exacto de host/DB piloto y una tabla sentinela
+creada **solo al inicializar el volumen piloto**, lo que evita que
+un parámetro mal configurado envíe escrituras a la DB principal.
+La vista previa verifica también ese destino mediante una transacción
+`READ ONLY` y termina con `ROLLBACK`. No combinar `compose.yaml` con
+`compose.pilot.yaml`: en esta instalación de Compose se observó que
+la combinación inició también el servicio `migrate` central. El piloto
+usa el proyecto Compose `gambarte-pilot` y su propio volumen.
+No modifica SyncCursor, no activa workers, no crea cobertura
+operativa y no valida el match entre países. La transformación de
+dirección se mantiene deshabilitada por las barreras existentes.
+
+**Protección de datos:** la prueba guarda códigos, importes y estados
+reales en el volumen local piloto; proteger acceso a Docker y respaldos
+y no publicar dumps/logs. `pilot-db` no publica puerto a host.
+No ejecutar `docker compose down -v` con servicios productivos.
+No eliminar el volumen piloto sin plan explícito de retención y
+revisión de las muestras.
+
+El marcador `pilot_instance_guard` se crea la primera vez que MariaDB
+inicializa el volumen. Si el volumen ya existía sin el marcador,
+la importación falla de forma cerrada. Para sesiones simultáneas de
+pilot con workers activos, evitar ejecución duplicada; la prueba
+requiere workers ETL deshabilitados en las opciones del pilot.
+
+
+## Informe ejecutivo 2026 (solo muestra)
+
+Ver `docs/GERENCIA_CONCILIACION_2026.md` para comandos del exportador,
+limitaciones de cobertura y aceptación antes de presentar cifras anuales.
+El generador `scripts.management_report_2026` lee exclusivamente la DB
+piloto y produce un HTML imprimible en una carpeta local privada.
+**No certifica toda la gestión 2026** ni activa la sincronización.

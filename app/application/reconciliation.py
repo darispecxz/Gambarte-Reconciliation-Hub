@@ -1,48 +1,245 @@
+"""Operational reconciliation use-case: requires complete, fresh source coverage."""
 from collections import defaultdict
-from decimal import Decimal
+from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.domain.reconciliation import Remittance, Payment, reconcile
-from app.infrastructure.models import SourceRecord, ReconciliationRun, Discrepancy, SyncRun, now
+
+from app.core.config import get_settings
+from app.domain.matching import Decision, OperationEvidence, PaymentEvidence, decide
+from app.domain.operation_types import (
+    allowed_destination_payment_types, classify_operation,
+)
+from app.infrastructure.models import (
+    Discrepancy, Payment, ReconciliationMatch, ReconciliationRun, Remittance,
+    SyncCursor, SyncRun, now,
+)
+
+DATASETS = tuple((country, dataset)
+                 for country in ("BOLIVIA", "CHILE")
+                 for dataset in ("remittance", "payment"))
+
+
+def source_readiness(session: Session) -> tuple[bool, str, dict]:
+    s = get_settings()
+    if not s.source_mapping_verified:
+        return False, "Source mappings have not been approved", {}
+    last_success = {}
+    for country, dataset in DATASETS:
+        successful = session.scalar(
+            select(SyncRun).where(
+                SyncRun.source == country, SyncRun.dataset == dataset,
+                SyncRun.status == "COMPLETED",
+            ).order_by(SyncRun.id.desc()).limit(1)
+        )
+        latest = session.scalar(
+            select(SyncRun).where(SyncRun.source == country, SyncRun.dataset == dataset)
+            .order_by(SyncRun.id.desc()).limit(1)
+        )
+        if not successful or not successful.finished_at:
+            return False, f"No successful synchronization: {country}/{dataset}", {}
+        if latest and latest.status in {"FAILED", "RUNNING"}:
+            return False, f"Latest synchronization not complete: {country}/{dataset}", {}
+        if now() - successful.finished_at > timedelta(minutes=s.max_source_age_minutes):
+            return False, f"Stale synchronization: {country}/{dataset}", {}
+        cursor = session.scalar(select(SyncCursor).where(
+            SyncCursor.source == country, SyncCursor.dataset == dataset
+        ))
+        if cursor is None or cursor.in_progress or cursor.window_start is None:
+            return False, f"Missing extraction coverage: {country}/{dataset}", {}
+        last_success[(country, dataset)] = {
+            "finished_at": successful.finished_at.isoformat(),
+            "window_start": cursor.window_start.isoformat(),
+            "window_start_dt": cursor.window_start,
+        }
+    return True, "ready", last_success
+
+
+def _operation(row: Remittance) -> OperationEvidence:
+    return OperationEvidence(
+        id=row.id, source=row.source, code=row.code, direction=row.direction,
+        operation_type=row.operation_type, status=row.status,
+        amount=row.amount, currency=row.currency,
+    )
+
+
+def _payment(row: Payment) -> PaymentEvidence:
+    return PaymentEvidence(
+        id=row.id, source=row.source, code=row.code, operation_type=row.operation_type,
+        amount=row.amount, currency=row.currency, occurred_at=row.occurred_at,
+    )
+
 
 def execute(session: Session, run: ReconciliationRun) -> int:
     if run.status != "PENDING":
         raise ValueError("Only pending runs are executable")
-    # Incomplete source syncs invalidate an apparently successful reconciliation.
-    recent = session.scalars(select(SyncRun).order_by(SyncRun.id.desc())).all()
-    statuses = {}
-    for item in recent:
-        statuses.setdefault((item.source,item.dataset),item.status)
-    if any(statuses.get((src,ds)) != "COMPLETED" for src in ("BOLIVIA","CHILE")
-           for ds in ("remittance","payment")):
-        run.status="BLOCKED"
-        run.message="Required source datasets not successfully synchronized"
-        run.finished_at=now()
+    ready, reason, coverage = source_readiness(session)
+    if not ready:
+        run.status = "BLOCKED"
+        run.message = reason
+        run.finished_at = now()
         session.commit()
         return 0
-    run.status="RUNNING"
+
+    run.status = "RUNNING"
     session.flush()
     try:
-        records = session.scalars(select(SourceRecord)).all()
-        payment_index = defaultdict(list)
-        for r in records:
-            if r.dataset=="payment":
-                payment_index[(r.source,r.code)].append(
-                    Payment(r.code,r.amount or Decimal("0"),r.currency))
-        count=0
-        # Full code correlation is provisional: don't produce financial balances.
-        for r in records:
-            if r.dataset!="remittance" or r.status!="PAID":
+        remittances = session.scalars(select(Remittance).order_by(Remittance.id)).all()
+        payments = session.scalars(select(Payment).order_by(Payment.id)).all()
+        index: dict[tuple[str, str], list[Remittance]] = defaultdict(list)
+        payment_index: dict[tuple[str, str], list[PaymentEvidence]] = defaultdict(list)
+        for rem in remittances:
+            index[(rem.source, rem.code)].append(rem)
+        for payment in payments:
+            payment_index[(payment.source, payment.code)].append(_payment(payment))
+
+        count = 0
+        processed = set()
+        for rem in remittances:
+            if rem.id in processed:
                 continue
-            target = "CHILE" if r.source=="BOLIVIA" else "BOLIVIA"
-            rem = Remittance(r.code,r.status,r.amount or Decimal("0"),r.currency)
-            for result in reconcile(rem,payment_index.get((target,r.code),[])):
-                session.add(Discrepancy(run_id=run.id,code=result.code,
-                      category=result.category,description=result.description))
-                count+=1
-        run.status="COMPLETED"
-        run.finished_at=now()
-        run.message=f"{count} provisional findings; no financial balance calculated"
+            # Historical run excludes operations that did not yet exist.
+            if run.cutoff_at is not None and (
+                rem.occurred_at is None or rem.occurred_at > run.cutoff_at
+            ):
+                continue
+            evidence = _operation(rem)
+            compatible_payments = []
+            unexpected_payments = []
+            allowed_payment_types = None
+            if rem.direction in ("BO_TO_CL", "CL_TO_BO"):
+                origin = "BOLIVIA" if rem.direction == "BO_TO_CL" else "CHILE"
+                if rem.source != origin:
+                    if index.get((origin, rem.code)):
+                        # Will be evaluated by the origin's own record.
+                        continue
+                    decision = Decision("MISSING_ORIGIN", "Origin operation not found")
+                    candidates = []
+                    destination = rem.source
+                else:
+                    destination = "CHILE" if origin == "BOLIVIA" else "BOLIVIA"
+                    candidates = [c for c in index.get((destination, rem.code), [])
+                                  if c.direction in (None, rem.direction)]
+                    all_payments = payment_index.get((destination, rem.code), [])
+                    allowed_payment_types = allowed_destination_payment_types(
+                        origin, destination, rem.operation_type
+                    )
+                    compatible_payments = (
+                        [p for p in all_payments
+                         if p.operation_type in allowed_payment_types]
+                        if allowed_payment_types is not None else []
+                    )
+                    unexpected_payments = (
+                        [p for p in all_payments
+                         if p.operation_type not in allowed_payment_types]
+                        if allowed_payment_types is not None else all_payments
+                    )
+                    # Multiple same-code origin rows cannot be safely paired.
+                    if len(index[(origin, rem.code)]) > 1:
+                        decision = Decision("MANUAL_REVIEW", "Ambiguous origin code")
+                    elif allowed_payment_types is None:
+                        decision = Decision(
+                            "INSUFFICIENT_DATA",
+                            "Origin-to-destination payment type mapping is unverified",
+                        )
+                    elif unexpected_payments:
+                        decision = Decision(
+                            "MANUAL_REVIEW",
+                            "Payment exists with a type outside the approved mapping",
+                        )
+                    elif not candidates and index.get((destination, rem.code)):
+                        decision = Decision("STATUS_MISMATCH", "Counterpart has a contradictory direction")
+                    else:
+                        # Destination may have only a payment, not a mirrored remesa.
+                        decision = decide(evidence, [_operation(c) for c in candidates],
+                                          compatible_payments,
+                                          cutoff_at=run.cutoff_at)
+            else:
+                candidates = []
+                destination = "CHILE" if rem.source == "BOLIVIA" else "BOLIVIA"
+                decision = Decision("INSUFFICIENT_DATA", "Direction not established")
+
+            # The persisted coverage describes the latest rolling window, not a
+            # complete historical index. Never call old unmatched rows missing.
+            # Missing PAYMENT evidence is meaningful only when the destination
+            # PAYMENTS dataset covers the remittance date. A successful remittance
+            # sync alone does not establish payment coverage.
+            coverage_dataset = ("payment" if decision.result == "PAYMENT_MISSING"
+                                else "remittance")
+            window = coverage[(destination, coverage_dataset)]["window_start_dt"]
+            if rem.occurred_at is None or rem.occurred_at < window:
+                if decision.result in {"MISSING_ORIGIN", "MISSING_DESTINATION", "PAYMENT_MISSING"}:
+                    decision = Decision("INSUFFICIENT_DATA",
+                                        "Historical coverage cannot prove absence")
+            if run.cutoff_at is not None and decision.result == "PAYMENT_MISSING":
+                # The last successful rolling sync is not a historical snapshot.
+                # No matching payment by cutoff cannot be certified absent.
+                decision = Decision("INSUFFICIENT_DATA",
+                                    "No full payment history verified at requested cutoff")
+            # Never assert missing payment merely because a rolling window
+            # contains the origin date. Payment SLA and audited completeness
+            # by modality are not yet approved for historical 2026 evidence.
+            if decision.result == "PAYMENT_MISSING":
+                decision = Decision(
+                    "INSUFFICIENT_DATA",
+                    "Destination payment absence is not certified: "
+                    "coverage completeness and payment deadline unverified",
+                )
+            counterpart_id = candidates[0].id if len(candidates) == 1 else None
+            session.add(ReconciliationMatch(
+                run_id=run.id, remittance_id=rem.id, counterpart_id=counterpart_id,
+                result=decision.result, reason=decision.reason,
+                evidence={
+                    "source_record_id": rem.source_record_id,
+                    "origin_modality": classify_operation(rem.source, "remittance",
+                                                          rem.operation_type),
+                    "destination_payment_modalities": [
+                        classify_operation(destination, "payment", p.operation_type)
+                        for p in compatible_payments
+                    ],
+                    "approved_destination_payment_types": (
+                        sorted(allowed_payment_types)
+                        if allowed_payment_types is not None else []
+                    ),
+                    "unexpected_payment_type_ids": sorted({
+                        p.operation_type for p in unexpected_payments
+                        if p.operation_type is not None
+                    }),
+                    "candidate_ids": [c.id for c in candidates],
+                    "destination": destination,
+                    "cutoff_at": run.cutoff_at.isoformat() if run.cutoff_at else None,
+                    "matched_payment_ids": [p.id for p in compatible_payments
+                                            if run.cutoff_at is None or
+                                            (p.occurred_at is not None and
+                                             p.occurred_at <= run.cutoff_at)],
+                    "payments_after_cutoff_ids": [p.id for p in compatible_payments
+                                                   if run.cutoff_at is not None and
+                                                   p.occurred_at is not None and
+                                                   p.occurred_at > run.cutoff_at],
+                    "verified_amount": decision.verified_amount,
+                    "source_sync_finished_at": coverage[(rem.source, "remittance")]["finished_at"],
+                    "destination_remittance_sync_finished_at": coverage[
+                        (destination, "remittance")]["finished_at"],
+                    "destination_payment_sync_finished_at": coverage[
+                        (destination, "payment")]["finished_at"],
+                },
+                checked_at=now(),
+            ))
+            processed.add(rem.id)
+            if counterpart_id is not None:
+                processed.add(counterpart_id)
+            if decision.result not in {"MATCHED", "PENDING", "PENDING_AS_OF", "CLOSED"}:
+                session.add(Discrepancy(
+                    run_id=run.id, code=rem.code,
+                    category=decision.result, description=decision.reason,
+                ))
+                count += 1
+
+        run.status = "COMPLETED"
+        run.finished_at = now()
+        run.message = (
+            f"{count} findings; operational presence only (cutoff={run.cutoff_at}); "
+            "payment amounts and financial settlements are NOT certified"
+        )
         session.commit()
         return count
     except Exception:

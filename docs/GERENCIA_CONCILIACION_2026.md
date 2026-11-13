@@ -1,0 +1,253 @@
+# Presentación a Gerencia — Conciliación Operativa Bolivia–Chile, gestión 2026
+
+**Fecha de preparación:** 12 de noviembre de 2026.
+**Período solicitado:** del 01/01/2026 hasta la fecha de corte explícita (no asumir diciembre cerrado).
+**Naturaleza:** conciliación de presencia, estado y códigos entre los sistemas; NO es conciliación monetaria, FX ni cierre contable.
+
+## Resumen ejecutivo
+
+Se construyó una plataforma independiente que consulta los sistemas de Bolivia y
+Chile en modo de solo lectura. La prueba piloto documentada en
+`docs/PILOT_RESULTS.md` registra 200 filas (50 por dataset), 200 versiones,
+100 remesas y 100 pagos, con idempotencia verificada en el entorno aislado.
+En la pequeña muestra se identificaron 38 candidatos BO→CL y 1 CL→BO
+por código. **No son 39 operaciones conciliadas de toda la gestión 2026.**
+La muestra se eligió por orden de clave primaria y no por representatividad
+temporal; algunas filas son de agosto y septiembre. No extrapolar porcentajes.
+
+## Entregable ejecutable
+
+`scripts.management_report_2026` genera un HTML imprimible con:
+- registro mensual por país y dataset, fecha de creación 2026;
+- estados de remesas registrados en la muestra;
+- clasificación provisional por dirección y tipo de operación;
+- advertencia visible: cobertura 2026 NO VERIFICADA;
+- decisiones pendientes y exclusiones contables.
+
+Se limita a `pilot-db` del proyecto Compose independiente, exige marcador
+de origen piloto y ETL/mapping deshabilitados; abre transacción READ ONLY y
+no imprime códigos ni importes. Para generar reporte local:
+
+```bash
+git pull origin feat/operational-reconciliation-phase-b
+mkdir -p private-reports
+# Asegurar que la carpeta esté excluida de git antes de guardar datos.
+docker compose -f compose.pilot.yaml --profile pilot build pilot-import
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  -v "${PWD}/private-reports:/export" pilot-import \
+  python -m scripts.management_report_2026 \
+  --year 2026 --through 2026-11-12 \
+  --output /export/conciliacion_operativa_2026_preliminar.html
+```
+
+**ATENCIÓN:** verificar que `private-reports/` está ignorado por Git
+(por ejemplo agregar la ruta a `.git/info/exclude` local antes de generar),
+proteger accesos y no compartir el HTML fuera de la organización sin autorización.
+
+## Qué falta para presentar resultados completos 2026
+
+1. **Definir corte y alcance:** del 01/01/2026 al día de la extracción;
+   identificar remesas originadas antes de 2026 y pagadas en 2026
+   por separado; no omitirlas del análisis de pagos del año.
+2. **Contrato de tipos:** revisión formal de cada remesa y pago
+   transfronterizo. En Chile pagos 5/6/8 no se observaron en el
+   muestreo acotado; evitar conclusiones basadas solo en defaults POC.
+3. **Extracción histórica 2026:** procedimiento paginado y reanudable,
+   con límite y plan SQL revisado por dataset, en etapas y fuera de horas pico.
+   No cargar todos los meses sin plan de índices, estimación de volumen,
+   autorización de responsable de datos y espacio suficiente en piloto.
+4. **Cobertura verificable:** inventario de fechas/tipos, conteos de
+   origen y destino reconciliados por mes, exclusiones y anulaciones,
+   actualizaciones posteriores y reconciliación con el legado.
+5. **Candidatos y excepciones:** comparar `codigo` + modalidad,
+   no asumir unicidad global; rechazar repetidos, reversas y
+   múltiples pagos hasta revisión; jamás certificar ausencia de pago
+   sin cobertura íntegra y plazo aprobado.
+6. **Trazabilidad:** exportar agregado gerencial y reporte privado por
+   código únicamente con permiso, con referencias origen/destino,
+   evidencia y revisión de excepciones.
+7. **Validación formal:** operaciones y riesgos aprueban muestras
+   individuales, plazos, estados y porcentajes; TI certifica el
+   procedimiento técnico y la auditoría.
+8. **Separar operativo de contable:** no prometer suma de diferencias,
+   saldos, tipo de cambio, liquidación o cuadratura monetaria
+   mientras no exista contrato contable adicional.
+
+## Mensaje sugerido para Gerencia
+
+> Se implementó y verificó una primera etapa técnica de conciliación
+> operativa Bolivia–Chile mediante una base aislada y acceso de solo
+> lectura a los sistemas originales. Esta etapa permite identificar
+> correspondencias por código, estados y modalidades, y separar
+> excepciones para su análisis. La consolidación de toda la gestión
+> 2026 aún requiere validar reglas de negocio y completar una
+> extracción histórica con cobertura comprobada. Los resultados
+> preliminares no equivalen a cierre contable ni a certificación de
+> pagos faltantes.
+
+**No cambiar** `ENABLE_SOURCE_ETL=false` ni
+`SOURCE_MAPPING_VERIFIED=false` con la evidencia disponible.
+
+
+## Backfill histórico mensual 2026 — versión controlada
+
+Implementado en scripts/pilot_backfill_2026.py. No es una importación
+automática de todo el año. Usa un solo país, dataset y mes por invocación,
+paginación keyset por clave verificada, filtros de fecha de creación con
+intervalo [primer día del mes, primer día del mes siguiente) y EXPLAIN
+previo a cada página. Rechaza planes sin índice o de costo excesivo.
+No usa OFFSET ni escribe en bases de origen; cada página se lee bajo
+START TRANSACTION READ ONLY y termina con ROLLBACK.
+
+Los registros reales se guardan exclusivamente en la DB pilot-db
+con marcador de seguridad, tras indicar --apply y
+--acknowledge-sensitive-data. Máximo 2 páginas de 50 registros cada
+una por ejecución. El cursor por país/dataset/mes se guarda en
+pilot_backfill_progress en la misma transacción que ingest(), para
+permitir reanudar sin duplicar versiones y eventos. La tabla de progreso
+solo se crea dentro del piloto al aplicar la primera importación.
+
+**Diagnóstico inicial sin escrituras (Bolivia remesas enero):**
+
+```bash
+git pull origin feat/operational-reconciliation-phase-b
+docker compose -f compose.pilot.yaml --profile pilot build pilot-import
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_backfill_2026 \
+  --source BOLIVIA --dataset remittance --month 2026-01 --limit 20
+```
+
+**La carga real exige revisar el plan y autorización del responsable:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_backfill_2026 \
+  --source BOLIVIA --dataset remittance --month 2026-01 \
+  --limit 50 --pages 2 --apply --acknowledge-sensitive-data
+```
+
+Repetir de forma controlada reanuda el cursor. No convertir en bucle
+enero–noviembre ni aumentar límites sin medir impacto.
+
+**Estado agregado de 2026 (solo lectura piloto):**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+  python -m scripts.pilot_backfill_status --through 2026-11-12
+```
+
+NOT_STARTED / IN_PROGRESS / SCAN_EXHAUSTED_NOT_CERTIFIED nunca
+equivalen a cobertura certificada de la fuente. Todavía faltan conteos
+cruzados por mes, cambios históricos, códigos ambiguos y operaciones
+de origen anterior a 2026 pagadas durante 2026. Los valores anuales
+de gerencia se mantienen PRELIMINARES hasta cerrar esos controles.
+
+
+## Validación independiente de conteos mensuales
+
+Usar scripts.pilot_month_count antes de importar meses adicionales.
+Cada comprobación se ejecuta para un país, dataset y mes, con el mismo
+filtro de fecha de creación y tipos de operación que el backfill.
+La extracción y el COUNT se ejecutan en momentos distintos: una
+coincidencia puede dejar de ser válida si llegan altas o correcciones,
+y no comprueba operaciones de años anteriores.
+
+**Primero ver el plan EXPLAIN, sin ejecutar COUNT:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_month_count \
+  --source BOLIVIA --dataset remittance --month 2026-01
+```
+
+Si el plan SQL utiliza índice y el costo es aceptable, ejecutar COUNT
+con la opción --count:
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_month_count \
+  --source BOLIVIA --dataset remittance --month 2026-01 --count
+```
+
+Repetir cambiando --source y --dataset para los cuatro pares. Nunca
+activar ETL ni SOURCE_MAPPING_VERIFIED. Las salidas posibles son
+COUNT_MATCH_NOT_CERTIFIED, COUNT_MISMATCH_REVIEW_REQUIRED y
+SCAN_INCOMPLETE. Son controles de conteo, no certificación completa
+de conciliación. No automatizar los cuatro COUNT de Chile antes de
+inspeccionar los planes individuales.
+
+
+## Orquestador mensual limitado (no automático en segundo plano)
+
+El módulo `scripts.pilot_backfill_runner` evita invocar manualmente
+cada lote. Su alcance está restringido a un mes por invocación, con
+máximo cinco tandas de 2 páginas x 50 filas para cada dataset.
+Por defecto **solo verifica conteos**, sin escribir ni reimportar.
+
+**Validar automáticamente los dos conteos pendientes de Chile Enero
+(tras revisar sus planes y evitar horas pico):**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_backfill_runner \
+  --month 2026-01 --source CHILE
+```
+
+Cada `COUNT(*)` ejecuta `EXPLAIN` bajo transacción `READ ONLY`
+y rechaza planes no indexados o con estimaciones sobre los límites.
+Si hay diferencia entre el número de filas de origen y las examinadas
+durante backfill, el orquestador **detiene** la ejecución inmediatamente.
+`COUNT_MATCH_NOT_CERTIFIED` verifica únicamente cantidades, no
+identidades ni remesas de años anteriores.
+
+**Para importar el siguiente mes, solo después de autorizarlo y revisar
+la carga prevista:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_backfill_runner \
+  --month 2026-02 --source BOLIVIA --dataset remittance \
+  --apply --acknowledge-sensitive-data --max-batches 5
+```
+
+El comando solo realiza hasta 500 filas por dataset. Repetirlo retoma
+el último cursor confirmado. Cada lote realiza auditoría de integridad
+sobre el piloto y hace pausas; al terminar el cursor se comprueba
+el total de origen. **No** usar `--source ALL --apply` hasta terminar
+la revisión de índices de Chile para cada mes. No hay bucle de enero
+a noviembre ni tareas recurrentes.
+
+
+## Verificación paginada Chile sin COUNT(*) sin índice
+
+El comando `scripts.pilot_chile_count_scan` usa SELECT de **solo claves
+primarias** con FORCE INDEX (PRIMARY), filtros por fecha/tipo de enero y
+cursores keyset propios. No modifica fuente, ni reimporta registros.
+El checkpoint de conteo vive únicamente en `pilot_chile_count_progress`.
+Cada página se ejecuta en transacción READ ONLY y se revisa con EXPLAIN.
+Si el plan no pasa los límites, se detiene sin ejecutar la lectura.
+No supone una fotografía temporal consistente entre sesiones y no
+demuestra completitud histórica de actualizaciones tardías.
+
+**Primero prueba de una página sin escrituras:**
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+ python -m scripts.pilot_chile_count_scan \
+ --dataset payment --month 2026-01 --limit 20
+```
+
+Tras revisar índice y tiempo, autorizar explícitamente la persistencia
+del checkpoint de conteo aislado (no datos nuevos en producción):
+
+```bash
+docker compose -f compose.pilot.yaml --profile pilot run --rm pilot-import \
+ python -m scripts.pilot_chile_count_scan \
+ --dataset payment --month 2026-01 --pages 10 \
+ --apply --acknowledge-sensitive-data
+```
+
+Repetir hasta `COUNT_MATCH_NOT_CERTIFIED` o detener ante discrepancia.
+Luego repetir para remittance, primero con el diagnóstico sin --apply.
+Solo se comprueban conteos, no igualdad de claves; no equivale a
+cobertura certificada ni sustituye auditoría de integridad.
