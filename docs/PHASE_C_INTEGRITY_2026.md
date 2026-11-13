@@ -125,3 +125,48 @@ Después, generar nuevamente los reportes de Fase C. No supone que otros
 pagos antiguos sin `return_reason` sean pagos normales: el dato aún no fue
 capturado en ellos y requiere actualización antes de auditar masivamente
 las devoluciones.
+
+
+## Recuperación dirigida del año 2025 — opt-in
+
+Con las devoluciones locales de Bolivia separadas, el módulo
+`scripts/pilot_phase_c_recover_2025.py` calcula en vivo los casos
+`NO_ORIGIN_IN_PILOT` restantes (máximo 25 códigos). Para cada código:
+
+1. Comprueba que tenga un solo pago candidato en el piloto.
+2. Consulta por código el origen en la base correspondiente mediante SELECT
+   protegido por EXPLAIN y transacción READ ONLY.
+3. Acepta únicamente un registro de origen, de 2025, con tipo compatible.
+4. No incorpora registros ambiguos, fuera de 2025, con fecha nula o tipo
+   incompatible; informa categorías `REVIEW_*`.
+5. No modifica checkpoints históricos de 2026, ni considera estas recuperaciones
+   evidencia de cobertura histórica total.
+
+**Simulación obligatoria recomendada (sin escrituras):**
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_phase_c_recover_2025 \
+  --through 2026-11-13 --max-codes 25
+```
+
+Si todos los candidatos están clasificados como `ELIGIBLE_2025_SOURCE`,
+ejecutar explícitamente (solo piloto):
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_phase_c_recover_2025 \
+  --through 2026-11-13 --max-codes 25 \
+  --apply --acknowledge-sensitive-data
+```
+
+Los códigos se recalculan al iniciar cada ejecución: una operación pagada
+entretanto o reclasificada como devolución no se importará como origen
+pendiente si dejó de pertenecer a `NO_ORIGIN_IN_PILOT`.
+
+Tras aplicar, repetir la auditoría inversa de Fase C. No afirmar 20/20
+resueltos hasta que el log de simulación y el nuevo informe lo demuestren.
+
+**Limitación:** el origen puede cambiar entre la simulación y la aplicación;
+la ejecución con `--apply` vuelve a consultar, validar y verificar los
+registros, sin usar ciegamente la evidencia anterior.
