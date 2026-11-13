@@ -7,7 +7,9 @@ import argparse
 import csv
 from pathlib import Path
 from scripts.pilot_month_count import run as count_run
-from scripts.pilot_operation_detail_2026 import safe_csv_value,validate_export_path
+from scripts.pilot_operation_detail_2026 import safe_csv_value
+from scripts.management_report_2026 import EXPORT_DIR
+
 
 CHECKS=(
     ("BOLIVIA","remittance","2026-01"),
@@ -22,6 +24,21 @@ CHECKS=(
     ("CHILE","payment","2026-03"),
 )
 FIELDS=("source","dataset","month","status","source_count","pilot_rows_scanned","message")
+def validate_csv_export_path(path):
+    """Permit only a regular CSV destination directly inside the private /export mount."""
+    output = Path(path)
+    if (not output.is_absolute()
+            or output.parent != EXPORT_DIR
+            or output.suffix.lower() != ".csv"):
+        raise ValueError("Output must be a CSV file directly under /export")
+    if not EXPORT_DIR.is_dir():
+        raise RuntimeError("Mount a private local export directory at /export")
+    if output.is_symlink():
+        raise ValueError("Symlink output blocked")
+    if output.parent.resolve(strict=True) != EXPORT_DIR.resolve(strict=True):
+        raise ValueError("Output mount resolves outside approved directory")
+    return output
+
 def classify(result):
     if not result.get("counted"):
         return ("BLOCKED_UNSAFE_COUNT_PLAN" if result.get("status")=="COUNT_PLAN_BLOCKED"
@@ -46,9 +63,7 @@ def collect(executor=count_run):
         print(f"check_result={results[-1]['status']}",flush=True)
     return results
 def write(path,rows):
-    output=validate_export_path(path)
-    if output.suffix.lower()!=".csv": raise ValueError("Output must be CSV")
-    if output.is_symlink(): raise ValueError("Symlink output blocked")
+    output=validate_csv_export_path(path)
     with output.open("w",encoding="utf-8-sig",newline="") as fh:
         writer=csv.DictWriter(fh,fieldnames=FIELDS)
         writer.writeheader()
