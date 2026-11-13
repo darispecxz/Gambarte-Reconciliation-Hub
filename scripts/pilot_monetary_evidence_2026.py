@@ -12,6 +12,7 @@ from pathlib import Path
 from statistics import median
 
 from scripts.pilot_operation_detail_2026 import safe_csv_value, validate_export_path
+from app.domain.currency_routes import classify_currency_route
 
 COLUMNS=(
     ("direction","Dirección"),("cohort","Cohorte"),("as_of_status","Estado al corte"),
@@ -19,7 +20,9 @@ COLUMNS=(
     ("origin_currency","Moneda origen"),("payment_currency","Moneda pago"),
     ("origin_amount","Importe origen"),("payment_amount","Importe pago"),
     ("ratio_payment_per_origin","Cociente pago/origen (NO tipo de cambio)"),
-    ("money_flag","Clasificación monetaria"),("origin_key","Clave origen"),
+    ("money_flag","Clasificación monetaria"),
+    ("currency_route_status","Ruta de moneda"),("financial_status","Estado financiero"),
+    ("origin_key","Clave origen"),
     ("payment_key","Clave pago"),("origin_date","Fecha origen"),
     ("payment_date","Fecha pago"),("review","Revisión requerida"),
 )
@@ -89,7 +92,13 @@ def build(rows):
     for item in rows:
         row=dict(item)
         category,ratio,note=monetary_classification(row)
-        row.update(money_flag=category,ratio_payment_per_origin=ratio,review=note)
+        route=classify_currency_route(
+            row["direction"],row["origin_currency"],row["payment_currency"],
+            row.get("origin_source"),row.get("payment_source"))
+        finance=("NO_PAYMENT_EVIDENCE" if category=="NO_MATCHED_PAYMENT" else
+                 "FINANCIAL_VALIDATION_PENDING")
+        row.update(money_flag=category,ratio_payment_per_origin=ratio,review=note,
+                   currency_route_status=route,financial_status=finance)
         classified.append(row)
     summary=Counter(r["money_flag"] for r in classified)
     groups=defaultdict(list)
@@ -134,8 +143,8 @@ input,select{padding:10px;border:1px solid #c8d3df;border-radius:7px;margin:10px
 Los cocientes entre importes son únicamente indicadores numéricos, NO tipos de cambio.
 Se debe confirmar el significado y unidad de monto/envio, moneda contractual,
 comisiones, tasa pactada, moneda efectivamente entregada y asiento de liquidación.
-La coincidencia exacta de importes tampoco certifica pago o titularidad.</div>
-<div class="metrics" id="metrics"></div>
+La coincidencia exacta de importes tampoco certifica pago o titularidad. La ruta permitida no valida la moneda real de entrega; los campos de Chile siguen bajo revisión.</div>
+<div class="metrics" id="metrics"></div><h2>Rutas de moneda operativas (no financieras)</h2><div class="metrics" id="routes"></div>
 <h2>Monedas diferentes, agrupadas</h2>
 <div class="wrap"><table id="groups"></table></div>
 <h2>Detalle de revisión</h2>
@@ -144,6 +153,12 @@ La coincidencia exacta de importes tampoco certifica pago o titularidad.</div>
 <p id="count"></p><div class="wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
 <script>
 const ROWS=__ROWS__, SUMMARY=__SUMMARY__, GROUPS=__GROUPS__, COLS=__COLS__;
+const ROUTES={};for(const r of ROWS){ROUTES[r.currency_route_status]=(ROUTES[r.currency_route_status]||0)+1}
+for(const [key,value] of Object.entries(ROUTES)){
+let el=document.createElement('div');el.className='metric';
+let name=document.createElement('small');name.textContent=key;
+let count=document.createElement('strong');count.textContent=new Intl.NumberFormat('es-BO').format(value);
+el.append(name,count);document.querySelector('#routes').append(el)}
 const n=x=>new Intl.NumberFormat('es-BO').format(x);
 for(const [key,value] of Object.entries(SUMMARY)){
 let box=document.createElement('div');box.className='metric';
@@ -182,6 +197,8 @@ def run(input_csv,output):
           "financial_certification=False no_fx_rate_inferred=True")
     for key,value in sorted(summary.items()):
         print(f"{key}={value}")
+    for key,value in sorted(Counter(r["currency_route_status"] for r in rows).items()):
+        print(f"currency_route={key} count={value}")
     for g in grouped:
         print("fx_group="+"/".join((g["direction"],g["cohort"],
                                  g["origin_currency"],g["payment_currency"]))+
