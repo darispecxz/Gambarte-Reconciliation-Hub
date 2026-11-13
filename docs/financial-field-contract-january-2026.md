@@ -64,3 +64,48 @@ Mientras el contrato no esté demostrado:
   implícitos, ni marcar `FINANCIALLY_RECONCILED`.
 - No modificar las bases de origen ni usar tablas ajenas al flujo
   `remesa` / `pago` para suplir evidencia faltante.
+
+
+## Evidencia nueva: archivos históricos PHP Bolivia y Chile
+
+Se inspeccionaron localmente los archivos fuente aportados al proyecto:
+`bo_cgr_php-main.zip` y `cgr_chile_2-main.zip`. Son **copias de código**;
+no se ha acreditado que coincidan exactamente con lo desplegado en enero de 2026.
+
+**Chile — `controller/remesa.controller.php`, aprox. líneas 261–302.**
+
+- En el pago de remesa, `pago.id_operacion=3`, `pago.id_tipo_pago=1`.
+- Si el destino de pago es CLP (ID 2):
+  `pago.monto = REQUEST['monto_env_clp']`, y
+  `pago.tipo_cambio = REQUEST['tipo_cambio_clp']`.
+  El saldo de unidad CLP se descuenta usando el dato **distinto**
+  `REQUEST['monto_clp']`; no confundirlo con `pago.monto`.
+- Si el destino es USD, `pago.monto = REQUEST['monto_env_usd']`,
+  mientras el saldo de la unidad USD descuenta `REQUEST['monto_usd']`.
+- Ambas ramas guardan `pago.total = round(pago.monto * pago.tipo_cambio, 0)`.
+- `model/pago.php`, líneas 13–32, confirma que **se persiste**
+  `pago.total`.
+- `view/remesa/pago_clp.php`, líneas 7–18, identifica
+  `monto_env_clp` como **MONTO A PAGAR [USD]** y
+  `monto_clp` como **CONFIRMAR MONTO [CLP]**.
+  Esto sustenta la advertencia: `pago.monto` no es una cantidad CLP
+  aunque `pago.mon_rec=2`.
+
+**Bolivia — `registra_remesa.php` aprox. líneas 66–95,
+317–337, 852–896.**
+
+- El código separa `monto`, `total_cambio`,
+  `tipo_cambio_clp` y `total_clp`.
+- En el flujo revisado calcula `total_clp = monto * tipo_cambio_clp`,
+  y valida un cálculo basado en `confirma * tipoCambioChileBackend`.
+- Hay reglas de normalización de moneda antes del INSERT de `remesa`.
+  No asumir que `monto` en todas las modalidades es BOB.
+
+**Siguiente prueba controlada:** leer únicamente por clave primaria
+`remesa.total_clp` (Bolivia) y `pago.total` (Chile) para las doce
+operaciones ya muestreadas. Contrastar `pago.total` con el redondeo
+del producto `pago.monto * pago.tipo_cambio`. Separar el resultado
+`FORMULA_DIFF_REVIEW` de la comparación entre ambos totales, que
+**todavía no certifica el efectivo entregado ni una conciliación**.
+
+Herramienta: `scripts/pilot_legacy_payment_total_2026.py`.
