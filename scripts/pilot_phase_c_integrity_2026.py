@@ -15,7 +15,7 @@ from sqlalchemy import select, text
 
 from app.core.config import get_settings
 from app.domain.operation_types import allowed_destination_payment_types
-from app.infrastructure.models import Payment, Remittance
+from app.infrastructure.models import Payment, Remittance, SourceRecord
 from scripts.pilot_backfill_2026 import pilot_engine
 from scripts.pilot_coverage_audit_2026 import validate_output
 from scripts.pilot_import import PILOT_DB, PILOT_HOST, check_marker
@@ -24,7 +24,7 @@ from scripts.pilot_reconcile import DIRECTIONS
 PAYMENT_FIELDS = ("direction","payment_source","payment_code","payment_record_id",
                   "payment_type","payment_date","payment_amount","payment_currency",
                   "assessment","origin_candidates","compatible_origin_candidates",
-                  "same_code_payment_candidates","coverage_certified")
+                  "same_code_payment_candidates","return_reason_present","coverage_certified")
 COVERAGE_FIELDS = ("month","source","dataset","pilot_records","missing_code",
                    "missing_date_total_for_pair","historical_rows_seen",
                    "historical_scan_exhausted","recent_scans_finished",
@@ -35,6 +35,18 @@ PAIRS = (("BOLIVIA","remittance"),("BOLIVIA","payment"),
          ("CHILE","remittance"),("CHILE","payment"))
 
 
+def is_bolivia_return(payment):
+    """Nonblank pago.motivo in Bolivia indicates a local return.
+
+    Historical pilot payloads without the field remain unverified.
+    Do not export the free-text motive.
+    """
+    if payment.source != "BOLIVIA":
+        return False
+    payload = getattr(payment, "payload", None)
+    return isinstance(payload, dict) and bool(str(payload.get("return_reason") or "").strip())
+
+
 def payment_assessment(payment, origin_rows, same_code_payment_count,
                        origin, destination, origin_types):
     possible = [r for r in origin_rows if
@@ -43,7 +55,9 @@ def payment_assessment(payment, origin_rows, same_code_payment_count,
     matching = [r for r in possible if payment.operation_type in
                 (allowed_destination_payment_types(origin,destination,
                                                   r.operation_type) or ())]
-    if not possible:
+    if is_bolivia_return(payment):
+        label = "RETURNED_LOCALLY_IN_BOLIVIA"
+    elif not possible:
         label = "NO_ORIGIN_IN_PILOT"
     elif not matching:
         label = "PAYMENT_TYPE_NOT_COMPATIBLE_WITH_ORIGIN"
@@ -86,6 +100,7 @@ def inverse_payments(remittances, payments, cutoff):
                 origin_candidates=origin_count,
                 compatible_origin_candidates=match_count,
                 same_code_payment_candidates=by_code[p.code],
+                return_reason_present=str(is_bolivia_return(p)),
                 coverage_certified="False"))
     output.sort(key=lambda r:(r["assessment"],r["direction"],str(r["payment_code"]),
                               str(r["payment_record_id"])))
@@ -188,8 +203,9 @@ def collect(through):
                     Remittance.currency,Remittance.occurred_at)).all()
                 payments=conn.execute(select(
                     Payment.source_record_id,Payment.source,Payment.code,
-                    Payment.operation_type,Payment.amount,
-                    Payment.currency,Payment.occurred_at)).all()
+                    Payment.operation_type,Payment.amount,Payment.currency,
+                    Payment.occurred_at,SourceRecord.payload.label("payload"))
+                    .join(SourceRecord,SourceRecord.id==Payment.source_record_id)).all()
                 historical={}
                 if table_present(conn,"pilot_backfill_progress"):
                     cps=conn.execute(text("""
