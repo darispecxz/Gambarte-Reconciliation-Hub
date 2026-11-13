@@ -279,3 +279,53 @@ Nota: un nuevo cambio de datos de origen puede modificar la clasificación
 automática; el historial manual nunca se reescribe, y los eventos se
 muestran exclusivamente como evidencia de revisión, no como conciliación
 certificada.
+
+
+## Cobertura externa, etapa 1: conteos mensuales contra fuentes reales
+
+`scripts/pilot_phase_c_source_counts_2026.py` efectúa un solo
+cruce país/dataset/mes por ejecución. La fuente se consulta **solo
+bajo transacción MariaDB READ ONLY, SELECT fijo, EXPLAIN y
+`source_plan_guard`**; el piloto se lee con marca de aislamiento y
+transacción READ ONLY. No hay escrituras ni extracción de datos personales.
+
+Los intervalos son `[primer día del mes, primer día del mes siguiente)`;
+el último mes se corta al día siguiente de `--through`. Se cuenta
+por fecha **de creación** y tipos de operación ya configurados; no
+se consideran modificaciones posteriores de otros períodos como nuevos
+registros del mes.
+
+**Primer ensayo, solo una fuente y un mes:**
+
+```bash
+git pull --ff-only origin feat/phase-c-integrity-coverage
+docker compose -f compose.pilot.yaml --profile pilot build pilot-import
+
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  -v "$(pwd -W)/private-reports:/export" pilot-import \
+  python -m scripts.pilot_phase_c_source_counts_2026 \
+  --source BOLIVIA --dataset payment --month 2026-02 \
+  --through 2026-11-13 \
+  --output /export/fase_c_conteo_bolivia_pago_2026-02.csv
+```
+
+Las posibles categorías de evaluación son
+`MONTHLY_COUNT_DIFFERENCE_REVIEW` (investigar diferencia) y
+`MONTHLY_COUNTS_EQUAL_IDENTITIES_UNVERIFIED` (conteos iguales,
+**identidades aún no verificadas**).
+
+**Seguridad y límites:**
+- Si `EXPLAIN` rechaza la consulta (por ejemplo, plan `ALL` o
+  sin índice, o estimación excesiva), el módulo se detiene **sin
+  ejecutar SELECT COUNT**. No desactivar el guard ni ejecutar versiones
+  menos acotadas sobre producción para forzar la prueba.
+- La igualdad numérica no certifica completitud, correspondencia
+  de IDs, ni actualidad del contenido de registros. Una comparación
+  realizada mientras producción cambia también puede mostrar
+  diferencias temporales.
+- Los 20 orígenes recuperados de 2025 no se incluyen en los conteos
+  mensuales 2026, pero sí en la conciliación cruzada de pagos 2026.
+- Se requieren revisiones adicionales de identidad, snapshot temporal,
+  devoluciones históricas y totales de origen para una certificación;
+  el reporte mantiene `identity_verified=False` y
+  `coverage_certified=False` por diseño.
