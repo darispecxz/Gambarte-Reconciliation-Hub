@@ -3,7 +3,7 @@ from datetime import date,datetime
 from types import SimpleNamespace
 
 from scripts.pilot_phase_c_integrity_2026 import (
-    inverse_payments,monthly_coverage,payment_assessment,source_pair_count,is_bolivia_return,
+    inverse_payments,monthly_coverage,payment_assessment,source_pair_count,is_bolivia_return,payment_source_id,
 )
 
 
@@ -98,3 +98,11 @@ def test_motive_from_chile_does_not_define_bolivia_return():
     payment=row("CHILE","300",3,"2026-10-17 14:42:45")
     payment.payload={"return_reason":"LOCAL"}
     assert not is_bolivia_return(payment)
+
+
+def test_external_payment_identity_not_internal_pilot_primary_key():
+    payment=row("BOLIVIA","2101877",7,"2026-02-10 10:58:32",record_id=321)
+    payment.source_identifier="7:454900"
+    assert payment_source_id(payment)==454900
+    records=inverse_payments([], [payment],date(2026,11,13))
+    assert records[0]["payment_record_id"]==454900
