@@ -221,3 +221,61 @@ no alteran automáticamente `pilot_phase_c_integrity_2026.py`,
 El reporte automatizado seguirá señalando ambas observaciones hasta
 implementar una bitácora de resoluciones aprobadas y auditables en el
 piloto. La cobertura externa sigue `coverage_certified=False`.
+
+
+## Bitácora manual auditable (Fase C)
+
+Nuevo módulo `scripts/pilot_phase_c_review_register.py`.
+
+- `record` valida existencia de la excepción en el **piloto actual**,
+  su clasificación y la identidad exacta del pago. Simula por defecto.
+- `record --apply --acknowledge-sensitive-data` agrega un **evento
+  inmutable** en `pilot_phase_c_review_events` dentro del piloto aislado.
+  No actualiza `pago`, `remesa`, asientos, saldos o la clasificación
+  automática; jamás accede a las bases de origen.
+- El primer `record --apply` crea la tabla en el piloto, tras comprobar
+  `pilot_instance_guard`.
+- `export` genera el historial de decisiones en un CSV privado; los
+  reportes inversos mostrarán la última decisión manual, en dos columnas
+  independientes del estado automático.
+- `reviewer` y `evidence-ref` requieren identificadores internos cortos
+  **sin datos personales**. No agregar nombres de beneficiarios, documentos,
+  cuentas, teléfonos ni motivos libres.
+- No hay aprobación o corrección financiera automática. Un evento
+  `CONFIRMED_DUPLICATE_RECORD_CONNECTIVITY` documenta la causa confirmada,
+  pero la verificación de impacto en caja/libro mayor sigue pendiente.
+
+**Ejemplo de simulación** para uno de los pagos del duplicado; sustituir
+`operations_team` y `OPS-2026-2101877` por el responsable y referencia
+interna reales antes de persistir:
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  pilot-import python -m scripts.pilot_phase_c_review_register record \
+  --direction CL_TO_BO --code 2101877 --payment-source BOLIVIA \
+  --payment-record-id 454900 \
+  --classification-snapshot AMBIGUOUS_OR_DUPLICATE_CODE_REVIEW \
+  --decision CONFIRMED_DUPLICATE_RECORD_CONNECTIVITY \
+  --reviewer operations_team --evidence-ref OPS-2026-2101877
+```
+
+Para registrar de verdad, repetir **solo tras confirmar identidad y
+referencia** con `--apply --acknowledge-sensitive-data`. Los otros pagos
+son eventos distintos, cada uno con su propio ID de pago. El caso
+`7737958` usa `PAYMENT_TYPE_NOT_COMPATIBLE_WITH_ORIGIN` y
+`REVIEW_EXCEPTIONAL_PAYMENT_CHANNEL`: todavía no se declara como
+modalidad autorizada.
+
+**Exportar historial:**
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose -f compose.pilot.yaml --profile pilot run --rm \
+  -v "$(pwd -W)/private-reports:/export" pilot-import \
+  python -m scripts.pilot_phase_c_review_register export \
+  --output /export/fase_c_bitacora_revisiones_2026.csv
+```
+
+Nota: un nuevo cambio de datos de origen puede modificar la clasificación
+automática; el historial manual nunca se reescribe, y los eventos se
+muestran exclusivamente como evidencia de revisión, no como conciliación
+certificada.
