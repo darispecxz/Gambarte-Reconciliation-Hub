@@ -69,6 +69,18 @@ def payment_assessment(payment, origin_rows, same_code_payment_count,
     return label,len(possible),len(matching)
 
 
+def payment_source_id(payment):
+    """External pago.id_pago, not normalized SourceRecord's internal id."""
+    identifier=getattr(payment,"source_identifier",None)
+    if identifier is None:
+        # Only used by older synthetic unit-test fixtures.
+        return payment.source_record_id
+    part=str(identifier).rsplit(":",1)[-1]
+    if not part.isdigit():
+        raise RuntimeError("Malformed source payment identity")
+    return int(part)
+
+
 def inverse_payments(remittances, payments, cutoff):
     """Classify each in-scope payment, including unmatched payments.
 
@@ -93,7 +105,7 @@ def inverse_payments(remittances, payments, cutoff):
                 continue  # Keep exception file focused, report total in summary.
             output.append(dict(
                 direction=direction,payment_source=destination,
-                payment_code=p.code,payment_record_id=p.source_record_id,
+                payment_code=p.code,payment_record_id=payment_source_id(p),
                 payment_type=p.operation_type,
                 payment_date=p.occurred_at.isoformat(sep=" "),
                 payment_amount=str(p.amount) if p.amount is not None else "",
@@ -205,7 +217,8 @@ def collect(through):
                 payments=conn.execute(select(
                     Payment.source_record_id,Payment.source,Payment.code,
                     Payment.operation_type,Payment.amount,Payment.currency,
-                    Payment.occurred_at,SourceRecord.payload.label("payload"))
+                    Payment.occurred_at,SourceRecord.payload.label("payload"),
+                    SourceRecord.source_id.label("source_identifier"))
                     .join(SourceRecord,SourceRecord.id==Payment.source_record_id)).all()
                 historical={}
                 if table_present(conn,"pilot_backfill_progress"):
